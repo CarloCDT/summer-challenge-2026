@@ -345,6 +345,29 @@ item in the backlog), so calibrate before believing any number: uncalibrated, `s
 0.50 for a whole game even at +2765. Calibrated on 24 games vs `level2Silver` (base rate 0.72,
 Brier 0.184 against 0.202) it at least moves, 0.60 to 0.87 across a game.
 
+**Getting a debug agent into the ARENA (`--probe`, 2026-09-11).** The value head is 27,905
+parameters and pushes a student bake to **~108k characters**, over CodinGame's 100,000 cap and so
+unusable in the one place worth debugging — the arena is the only opponent pool we do not own, and
+our eval table demonstrably does not predict rank there. `--probe N` drops the value head and fits
+a **217-parameter** logistic probe on the same pooled bottleneck against real game outcomes:
+**90,861 characters**, and the policy stays byte-identical to `submission.py` (184 of 184 turns
+over two full games). stderr shows up in CodinGame's replay viewer.
+
+**The probe found no signal on the student, and that is the honest result.** 90 games vs
+`level2Silver`: every penalty setting, and every principal-component count from 1 to 32, scored
+**worse on held-out games than predicting the base rate**. So selection returns the base rate and
+the printed probability is a constant. Nothing ever asked the student's features to encode who is
+winning — it was distilled on policy logits alone. Three guards were added because the first three
+attempts each produced a confident wrong number instead: the validation split is **by game and
+stratified by outcome** (a random split gave a 0.49 train against 0.67 held-out base rate, which
+swamped the score), **"predict the base rate" is an explicit candidate** so the probe can never be
+worse than it, and **diverged fits are discarded** rather than winning on a nonsense Brier. The
+collected features are cached to `<out>.probe.npz`, so re-fitting is free.
+
+**The cheap test of whether `win_bonus` worked** is to re-fit this probe on a checkpoint from the
+1k run. That reward puts the match outcome directly into the return, so if its features still
+cannot beat the base rate, the bonus did not teach the network anything about winning.
+
 **Do not enlarge that stderr line.** A referee leaves stderr on a pipe it may not drain until the
 process exits (`railroad_env/opponent.py` reads it only on failure). Measured: 7,149 bytes over a
 60-turn game, so a full 100-turn game stays well under a typical 64 KB pipe buffer. Verified by

@@ -28,6 +28,23 @@ logistic P = sigmoid(a*V + b), and bakes `a` and `b` into the file. Consequences
     critic should calibrate far better than one trained on margin alone. Worth re-fitting after
     the first win_bonus run and comparing the Brier scores.
 
+--probe N INSTEAD OF --calibrate N, when the file has to fit CodinGame's 100,000 character cap.
+The value head is 27,905 parameters and pushes a student bake to ~108k, over the cap and therefore
+unusable in the arena - which is the one place worth debugging, since our eval demonstrably does
+not predict rank. `--probe` drops the value head entirely and fits a 217-parameter logistic probe
+on the SAME pooled bottleneck, against actual game outcomes. That lands at ~91k, and the policy
+stays byte-identical to `submission.py` (verified: 184 of 184 turns over two full games).
+
+Measured on `144318-distill_iter50`, 90 games vs level2Silver, the probe found NOTHING: every
+penalty setting, and every principal-component count from 1 to 32, scored WORSE on held-out games
+than simply predicting the base rate. Selection therefore returns the base rate, and the printed
+probability is a constant. That is the honest answer, not a bug - the student was distilled on
+policy logits alone, so nothing ever asked its features to encode who is winning. Three guards
+exist because the first three attempts each produced a confident wrong number instead: the split
+is by GAME and stratified by outcome (a random split gave a 0.49 train against 0.67 held-out base
+rate, which swamped the score), "predict the base rate" is an explicit candidate so the probe can
+never be worse than it, and diverged fits are discarded rather than winning on a nonsense Brier.
+
 STDERR IS NOT FREE. A referee spawns this with stderr on a pipe and may not drain it until the
 process exits (`railroad_env/opponent.py` only reads it on failure). At ~110 bytes a turn over 100
 turns that is ~11 KB against a typical 64 KB pipe buffer, so it fits - but do not add a per-cell
@@ -36,6 +53,11 @@ rather than fail cleanly.
 
     python3 bake_debug_agent.py checkpoints/<run>_iterN.pt -o debug_submission.py --calibrate 25
     python3 test_submission.py debug_submission.py          # stderr shows the critic's read
+
+    # under CodinGame's 100k cap, so it can be pasted into the ARENA where stderr is visible
+    # in the replay viewer - the only place the agent meets opponents we do not own
+    python3 bake_debug_agent.py checkpoints/<student>.pt -o debug_submission.py \
+        --quant int4 --probe 90
 
 QUANTIZATION IS A CHOICE BETWEEN THE TWO HEADS, and you cannot have both. Measured on
 `114307_iter300` over 30 turns, baked value against torch value on the same state:
@@ -52,6 +74,7 @@ the arena sees, and ignore V when you do. Size does not matter either way - this
 submitted, and fp16 runs about 5 MB.
 """
 import argparse
+import base64
 import re
 import sys
 from pathlib import Path
@@ -145,6 +168,113 @@ def collect_calibration(model, kwargs, episodes, opponent, force_disrupt, seed0=
     return np.array(values), np.array(wins)
 
 
+def collect_probe_data(model, kwargs, episodes, opponent, force_disrupt, seed0=95000):
+    """Per decision: the 216-dim pooled bottleneck the value head sees, plus who won the game.
+
+    Returns (X, y, game_id). `game_id` matters - the validation split must be by GAME, because
+    every decision in one game shares one outcome. Splitting by row would put near-duplicate
+    states on both sides and report a fantasy score."""
+    import torch.nn.functional as F
+    from railroad_env import RailroadGymEnv
+    from training.agent_model import VALUE_POOL_HW
+    from training.simulator import GameSimulator
+    from training.ppo import _decode_action
+
+    torch.set_num_threads(1)
+    grab = {}
+    h = model.bottleneck.register_forward_hook(lambda m, i, o: grab.__setitem__("b", o))
+    X, y, gid = [], [], []
+    try:
+        for i in range(episodes):
+            env = RailroadGymEnv(max_turns=100, opponent_strategy=opponent, seed=seed0 + i)
+            env.reset()
+            sim = GameSimulator.from_env(
+                env, allow_skip_disrupt=kwargs.get("policy_channels", 3) == 3,
+                force_disrupt=force_disrupt)
+            rows = []
+            while not sim.is_game_over():
+                mask = sim.get_action_mask()
+                with torch.no_grad():
+                    logits, _ = model(torch.from_numpy(sim.get_encoded_state()).unsqueeze(0),
+                                      torch.from_numpy(mask).unsqueeze(0))
+                    f = F.adaptive_avg_pool2d(grab["b"], VALUE_POOL_HW).flatten()
+                rows.append(f.numpy().copy())
+                sim.apply(_decode_action(int(torch.argmax(logits.flatten(1), dim=1).item()),
+                                         mask.shape, sim.pad_offsets))
+            gs = sim.game_state
+            won = 1.0 if gs.scores[0] > gs.scores[1] else 0.0
+            X.extend(rows); y.extend([won] * len(rows)); gid.extend([i] * len(rows))
+            print(f"  probe game {i + 1}/{episodes}: {gs.scores[0]}:{gs.scores[1]} "
+                  f"{'win' if won else 'loss/draw'}", flush=True)
+    finally:
+        h.remove()
+    return np.array(X, dtype=np.float64), np.array(y), np.array(gid)
+
+
+def fit_probe(X, y, gid, l2_grid=(1.0, 1e2, 1e4, 1e6), iters=800, stride=5, lr=0.5):
+    """L2 logistic regression on the pooled bottleneck, selected on HELD-OUT GAMES.
+
+    216 features against one independent outcome per game, so this overfits trivially without a
+    penalty, a group-wise split, and a floor. Three things here are not decoration:
+
+    STRATIFIED BY OUTCOME. Splitting games at random gave a 0.49 train base rate against a 0.67
+    validation base rate, which makes the held-out Brier unreadable - most of it was the shifted
+    base rate, not the model. Wins and losses are now split separately.
+
+    AN INTERCEPT-ONLY CANDIDATE. Large lambda does NOT drive w to zero under gradient descent: the
+    shrink and the gradient reach a fixed point at |w| ~ 22, which scored WORSE than the base rate.
+    So "predict the training base rate" is an explicit candidate, and the selected probe can never
+    be worse than it on held-out games.
+
+    ROW SUBSAMPLING. Consecutive decisions inside a turn are near-identical states, so every 5th
+    row loses almost nothing and makes the fit fast enough to re-run from the cached data."""
+    games = np.unique(gid)
+    won = np.array([y[gid == g][0] for g in games])
+    rng = np.random.RandomState(0)
+    val_games = set()
+    for outcome in (0.0, 1.0):
+        grp = games[won == outcome]
+        rng.shuffle(grp)
+        val_games.update(grp[:max(1, int(0.25 * len(grp)))].tolist())
+    va = np.array([g in val_games for g in gid])
+    tr = ~va
+    mu, sd = X[tr].mean(0), X[tr].std(0) + 1e-9
+    Xtr, ytr = ((X[tr] - mu) / sd)[::stride], y[tr][::stride]
+    Xva, yva = (X[va] - mu) / sd, y[va]
+
+    def brier(w, b):
+        return float(np.mean((_sigmoid(Xva @ w + b) - yva) ** 2))
+
+    # candidate 0: intercept only. The floor - a probe that cannot beat this is not a probe.
+    base = float(np.clip(ytr.mean(), 1e-6, 1 - 1e-6))
+    zero = np.zeros(X.shape[1])
+    best = (brier(zero, np.log(base / (1 - base))), "base rate only",
+            zero, np.log(base / (1 - base)))
+
+    for lam in l2_grid:
+        w, b = np.zeros(Xtr.shape[1]), 0.0
+        decay = min(0.99, lr * lam / len(ytr))
+        for _ in range(iters):
+            e = _sigmoid(Xtr @ w + b) - ytr
+            w = w * (1.0 - decay) - lr * (Xtr.T @ e / len(ytr))
+            b -= lr * e.mean()
+        if not (np.all(np.isfinite(w)) and np.isfinite(b)):
+            continue
+        sc = brier(w, b)
+        if sc < best[0]:
+            best = (sc, f"L2 {lam:g}", w, b)
+
+    sc, chosen, w, b = best
+    base_va = float(np.mean((ytr.mean() - yva) ** 2))
+    report = {
+        "chosen": chosen, "val_brier": sc, "val_base_brier": base_va,
+        "val_games": len(val_games), "train_games": len(games) - len(val_games),
+        "train_base": float(ytr.mean()), "val_base": float(yva.mean()),
+        "val_acc": float(np.mean((_sigmoid(Xva @ w + b) > 0.5) == (yva > 0.5))),
+    }
+    return w / sd, float(b - (w * mu / sd).sum()), report
+
+
 # --- runtime patches, applied to bake_agent.RUNTIME ---------------------------------------
 # Every replacement asserts it matched exactly once. If bake_agent.py's runtime is edited in a
 # way that breaks one of these, this script fails loudly at bake time rather than quietly baking
@@ -171,6 +301,27 @@ def _dbg_value(bo):
 
 '''
 
+_PROBE_FNS = '''
+def _dbg_apool(x,ph,pw):
+    """torch AdaptiveAvgPool2d: window i is [floor(i*n/out), ceil((i+1)*n/out)), so for
+    (5,7)->(2,3) the windows OVERLAP. Getting this wrong shifts the readout silently."""
+    c,h,w=x.shape
+    o=np.empty((c,ph,pw),np.float32)
+    for i in range(ph):
+        a=(i*h)//ph; b=-((-(i+1)*h)//ph)
+        for j in range(pw):
+            u=(j*w)//pw; v=-((-(j+1)*w)//pw)
+            o[:,i,j]=x[:,a:b,u:v].mean(axis=(1,2))
+    return o
+
+def _dbg_value(bo):
+    """A logistic probe fitted on game OUTCOMES, reading the same pooled bottleneck the value
+    head reads. Returns a logit, not a value: P(win) = sigmoid(this). 217 parameters against the
+    value head's 27,905, which is what keeps this file under CodinGame's 100k character cap."""
+    return float(_DBG_PW@_dbg_apool(bo,_DBG_VPH,_DBG_VPW).reshape(-1).astype(np.float64)+_DBG_PB)
+
+'''
+
 _MAIN_FWD_OLD = '''    logits=_fwd(observe(track,inst,inked_z,active,my_score-foe_score,turn))'''
 _MAIN_FWD_NEW = '''    logits,_dbg_val=_fwd(observe(track,inst,inked_z,active,my_score-foe_score,turn))'''
 
@@ -187,14 +338,16 @@ _PRINT_NEW = '''    _dbg_cmd=";".join(acts) if acts else "WAIT"
               "unbounded value, not a probability. Ordering is meaningful, the number is not.",
               file=sys.stderr, flush=True)
     _dbg_p=1.0/(1.0+np.exp(-max(-60.0,min(60.0,_DBG_A*_dbg_val+_DBG_B))))
-    print("T%-3d %6d-%-6d (%+d) | V %+9.4f | P(win) me %.3f foe %.3f | %s"
+    # The parentheses are load-bearing: % binds tighter than +, so without them the format
+    # applies to the last literal alone and the line dies with "not all arguments converted".
+    print(("T%-3d %6d-%-6d (%+d) | "+_DBG_LBL+" %+9.4f | P(win) me %.3f foe %.3f | %s")
           %(turn,my_score,foe_score,my_score-foe_score,_dbg_val,_dbg_p,1.0-_dbg_p,_dbg_cmd),
           file=sys.stderr, flush=True)
     turn+=1'''
 
 
 def build_debug_source(blob, shapes, quant, policy_channels, passive_income, allow_skip,
-                       vph, vpw, cal_a, cal_b, calibrated):
+                       vph, vpw, cal_a, cal_b, calibrated, probe=None):
     src = BA.build_source(blob, shapes, quant, policy_channels, passive_income,
                           allow_skip=allow_skip)
 
@@ -221,7 +374,9 @@ def build_debug_source(blob, shapes, quant, policy_channels, passive_income, all
             )
         return s.replace(old, new)
 
-    src = sub(src, "def _fwd(g):", _VALUE_FNS + "def _fwd(g):", "insert value head")
+    src = sub(src, "def _fwd(g):",
+              (_PROBE_FNS if probe is not None else _VALUE_FNS) + "def _fwd(g):",
+              "insert the critic readout")
     src = sub(src, "    return _conv(d1,P[\"head\"],1)",
               "    return _conv(d1,P[\"head\"],1),_dbg_value(bo)", "_fwd returns the value")
     src = sub(src, _MAIN_FWD_OLD, _MAIN_FWD_NEW, "unpack the value in the main loop")
@@ -230,6 +385,16 @@ def build_debug_source(blob, shapes, quant, policy_channels, passive_income, all
     # dequantization branch (_Q=="fp16" and friends), so it is not unique.
     header = (f"_DBG_VPH={vph}\n_DBG_VPW={vpw}\n_DBG_A={cal_a!r}\n_DBG_B={cal_b!r}\n"
               f"_DBG_CAL={calibrated!r}\n")
+    if probe is not None:
+        # float32 through base85, NOT through the quantized blob: 217 numbers cost ~1.1k chars at
+        # full precision, so there is nothing to gain by rounding them and a lot to lose - this
+        # IS the probability.
+        w, b = probe
+        header += (f'_DBG_PW=np.frombuffer(base64.b85decode('
+                   f'{base64.b85encode(np.asarray(w, np.float32).tobytes())!r}),np.float32)\n'
+                   f"_DBG_PB={float(b)!r}\n_DBG_LBL='logit'\n")
+    else:
+        header += "_DBG_LBL='V'\n"
     src = sub(src, "import numpy as np\n\n_Q=", "import numpy as np\n\n" + header + "_Q=",
               "calibration constants")
     return src
@@ -252,6 +417,17 @@ def main():
     ap.add_argument("--calibrate-opponent", default="level2Silver",
                     help="opponent the calibration games are played against (default: the frozen "
                          "rank-288 bake). The fit is only valid for this opponent's kind of game")
+    ap.add_argument("--probe", type=int, default=0, metavar="N",
+                    help="Instead of baking the 27,905-parameter value head, play N games and fit "
+                         "a 217-parameter logistic probe on the same pooled bottleneck, against "
+                         "actual game OUTCOMES. ~17k characters smaller, which is what gets a "
+                         "debug agent under CodinGame's 100k cap, and better calibrated than a "
+                         "sigmoid fitted on top of an untrained head. Validated on held-out GAMES")
+    ap.add_argument("--probe-cache", default=None, metavar="PATH",
+                    help="Save the probe's (features, outcomes) to this .npz and reuse it if it "
+                         "already exists. Collecting the data is the expensive part and refitting "
+                         "is instant, so cache it once and re-bake freely. Defaults to "
+                         "<output>.probe.npz")
     ap.add_argument("--skip-disrupt", dest="skip_disrupt", default=None,
                     action=argparse.BooleanOptionalAction,
                     help="as bake_agent.py: defaults to what the checkpoint recorded")
@@ -269,6 +445,47 @@ def main():
     else:
         allow_skip, source = args.skip_disrupt, "--skip-disrupt flag"
     print(f"  SKIP_DISRUPT in the baked agent: {allow_skip}  [{source}]")
+
+    if args.probe > 0 and args.calibrate > 0:
+        raise SystemExit("bake_debug_agent: --probe and --calibrate are alternatives. --probe "
+                         "fits the probability directly on outcomes; --calibrate fits a sigmoid "
+                         "on top of the value head. Pick one.")
+
+    probe = None
+    if args.probe > 0:
+        from training.agent_model import RailroadUNet
+        model = RailroadUNet(**kwargs)
+        model.load_state_dict(sd)
+        model.eval()
+        cache = Path(args.probe_cache or (args.out + ".probe.npz"))
+        if cache.exists():
+            d = np.load(cache)
+            X, y, gid = d["X"], d["y"], d["gid"]
+            print(f"\nreusing {cache} ({len(np.unique(gid))} games, {len(y):,} decisions). "
+                  f"Delete it to re-collect.")
+        else:
+            print(f"\nfitting a win-probability probe on {args.probe} greedy games vs "
+                  f"{args.calibrate_opponent}")
+            X, y, gid = collect_probe_data(
+                model, kwargs, args.probe, args.calibrate_opponent,
+                force_disrupt=bool(blob_ckpt.get("force_disrupt", False)))
+            np.savez_compressed(cache, X=X, y=y, gid=gid)
+            print(f"  cached to {cache}")
+        if len(np.unique(y)) < 2:
+            raise SystemExit("\nevery probe game had the same outcome - there is nothing to fit. "
+                             "Raise --probe, or pick an opponent that contests this checkpoint.")
+        w, b, rep = fit_probe(X, y, gid)
+        probe = (w, b)
+        print(f"\n  probe: 217 params, selected {rep['chosen']}, "
+              f"{rep['train_games']} train / {rep['val_games']} held-out games "
+              f"(base rate {rep['train_base']:.2f} train / {rep['val_base']:.2f} held-out)")
+        print(f"  HELD-OUT Brier {rep['val_brier']:.4f}  "
+              f"(base rate scores {rep['val_base_brier']:.4f})")
+        print(f"  HELD-OUT accuracy at 0.5: {rep['val_acc']:.3f}")
+        if rep["val_brier"] > 0.9 * rep["val_base_brier"]:
+            print("\n  !! the probe barely beats the base rate on held-out games, so these "
+                  "features carry little outcome information at this sample size. Read the "
+                  "ORDERING, not the number, and re-fit with more games.")
 
     cal_a, cal_b, calibrated = 1.0, 0.0, False
     if args.calibrate > 0:
@@ -304,17 +521,27 @@ def main():
                   f"predicting the base rate every time, so the value is carrying little outcome "
                   f"information here. Read the ORDERING, not the number.")
 
-    baked = BA.fold_batchnorm(sd) + value_params(sd)
+    # In probe mode the value head is not baked at all - that is the whole size saving.
+    baked = BA.fold_batchnorm(sd) + ([] if probe is not None else value_params(sd))
     blob, shapes = BA.quantize(baked, args.quant)
     from training.agent_model import VALUE_POOL_HW
     src = build_debug_source(blob, shapes, args.quant, kwargs["policy_channels"], 3,
                              allow_skip, VALUE_POOL_HW[0], VALUE_POOL_HW[1],
-                             cal_a, cal_b, calibrated)
+                             cal_a, cal_b, calibrated or probe is not None, probe)
     Path(args.out).write_text(src)
     n_policy = sum(w.size + b.size for _, w, b in BA.fold_batchnorm(sd))
-    n_value = sum(w.size + b.size for _, w, b in value_params(sd))
-    print(f"\npolicy params {n_policy:,} + critic params {n_value:,} = {n_policy + n_value:,}")
+    n_value = 217 if probe is not None else sum(w.size + b.size for _, w, b in value_params(sd))
+    kind = "probe" if probe is not None else "value head"
+    print(f"\npolicy params {n_policy:,} + {kind} {n_value:,} = {n_policy + n_value:,}")
     print(f"wrote {args.out}: {len(src):,} chars  [{args.quant}]")
+    if len(src) <= BA.CG_SOURCE_LIMIT:
+        print(f"  fits CodinGame's {BA.CG_SOURCE_LIMIT:,} char cap "
+              f"({100 * len(src) / BA.CG_SOURCE_LIMIT:.0f}% used) - this one CAN be pasted into "
+              f"the arena, where stderr shows up in the replay viewer")
+    else:
+        print(f"  !! {len(src):,} chars is over CodinGame's {BA.CG_SOURCE_LIMIT:,} cap, so this "
+              f"file cannot be run in the arena. Use --probe N instead of --calibrate N: it "
+              f"replaces the 27,905-param value head with a 217-param probe and saves ~17k chars")
     print("NOT submittable and not meant to be - the critic is dead weight in the arena, and "
           "this file exists to be read, not sent.")
     return 0

@@ -32,3 +32,6 @@ __pycache__/
 .idea/
 .DS_Store
 *.swp
+
+# probe training data cached next to a debug bake; regenerable, and large
+*.probe.npz
