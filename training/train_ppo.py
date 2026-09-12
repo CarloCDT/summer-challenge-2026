@@ -51,6 +51,7 @@ def train_ppo(
     score_norm: float = DEFAULT_SCORE_NORM,
     allow_skip_disrupt: bool = True,
     reward_mode: str = "own",
+    win_bonus: float = 0.0,       # terminal +/- bonus in raw score units; see ppo.py::_play_one_game
     force_disrupt: bool = False,
     action_selection: str = "epsilon_greedy",
     opponent_pool: dict = None,
@@ -186,7 +187,7 @@ def train_ppo(
                 allow_skip_disrupt=allow_skip_disrupt, score_norm=score_norm,
                 reward_mode=reward_mode, force_disrupt=force_disrupt,
                 action_selection=action_selection, opponent_pool=opponent_pool,
-                self_play_epsilon=self_play_epsilon,
+                self_play_epsilon=self_play_epsilon, win_bonus=win_bonus,
             )
             rollout_time = time.time() - iter_start
 

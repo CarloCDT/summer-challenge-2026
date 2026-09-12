@@ -1,7 +1,21 @@
 # PPO continuing from runs/20260911-114307, 1000 iterations, warm started from that run's FINAL
-# checkpoint. Everything except `num_iterations` and `init_checkpoint` is copied unchanged from
-# ppo_28ch_vs_silver.yaml, deliberately: the only two variables here are the starting point and
-# the length, so whatever this run does is attributable to them.
+# checkpoint, with three deliberate changes to the objective and the step size.
+#
+#   !! FIVE VARIABLES MOVE AT ONCE HERE, so this run cannot attribute a result to any one of them:
+#   !!   num_iterations   300    -> 1000     (asked for)
+#   !!   init_checkpoint  ...    -> 114307_iter300
+#   !!   gae_lambda       0.95   -> 0.98     (~2.3x the real-reward horizon)
+#   !!   lr               1e-4   -> 5e-5     (halved)
+#   !!   win_bonus        none   -> +/-5000  (terminal, on match outcome)
+#   !! If it works, the follow-up question "which of these did it" needs separate runs. If it
+#   !! fails, the same. That is a known and accepted cost of moving fast, not an oversight.
+#
+# WHY THESE THREE GO TOGETHER ANYWAY. They are not independent. The win bonus is a single terminal
+# reward ~250 decisions from the start of the game, and GAE credits a terminal reward directly over
+# only ~1/(1 - gamma*lambda) decisions: ~19 at lambda 0.95, ~44 at 0.98. Adding the bonus without
+# raising lambda would hand almost all of it to the critic. Raising lambda also raises advantage
+# variance, and halving lr is the standard compensation. So the bundle is coherent even though it
+# is not a clean experiment.
 #
 # WARM START: checkpoints/20260911-114307_iter300.pt. That run finished all 300 iterations and was
 # healthy throughout - explained variance 0.94 -> 0.98, clip_frac 0.29 -> 0.025, approx_kl 0.027 ->
@@ -20,7 +34,7 @@
 #
 #   !! TWO THINGS ABOUT iter300 SPECIFICALLY.
 #   !! 1. It sat at the END of a linear lr anneal, so its weights are near a converged point of a
-#   !!    schedule that had already cooled to ~0. Restarting at lr 1e-4 will move it immediately;
+#   !!    schedule that had already cooled to ~0. Restarting at lr 5e-5 will move it immediately;
 #   !!    expect the first ~10 iterations to look like a regression before they recover.
 #   !! 2. The optimizer state is NOT reloaded (train_ppo builds a fresh Adam), so momentum and the
 #   !!    second-moment estimates start cold regardless of what the checkpoint carries.
@@ -40,16 +54,29 @@
 #   !!   own training objective worse is the earliest honest signal, and it is decisive.
 #   !! - train/clip_frac climbing back above ~0.25 and staying there, especially if it is
 #   !!   insensitive to lr. Healthy is 0.05-0.2; the 114307 run ended at 0.025.
-#   !! - train/explained_variance falling well below ~0.9. It reached 0.98 on the warm start, and
-#   !!   it bounds how much long-horizon credit assignment is working at all.
+#   !! - train/explained_variance falling well below ~0.9 AFTER the first ~20 iterations. Expect a
+#   !!   drop at the start and do NOT stop on it: measured on a 3-iteration scratch run, adding
+#   !!   win_bonus took value_loss from ~0.09 to ~1.4 and EV from ~0.97 to 0.72-0.83, because the
+#   !!   warm-start critic has never seen a +/-5.0 terminal term and cannot yet predict which games
+#   !!   are won. That is the critic being handed a new target, not the run failing. What matters
+#   !!   is whether it climbs back: if EV is still under ~0.9 by iteration 50, the bonus is too
+#   !!   large for the critic to absorb and 1000-2000 is the thing to try.
 #   !! - eval/level2Silver/margin peaking and then declining across two consecutive checkpoints.
 #   !! PICK THE CHECKPOINT FROM THE EVAL TABLE, NEVER THE LAST ONE. 20 are written here.
 #
-# The lr schedule is the one thing 1000 iterations silently changes even though the lr line itself
-# is identical. decay_progress = iteration / (num_iterations - 1), so lr anneals over the FULL
-# count: at iteration 200 this run is still at ~8.0e-5 where a 300-iteration run would be at
-# ~3.3e-5. This run is hotter for far longer, which is the point of the length and also the reason
-# it can wander further from the warm start.
+# HOW THE LENGTH AND THE HALVED lr INTERACT. decay_progress = iteration / (num_iterations - 1), so
+# lr anneals over the FULL count and a longer run holds any given lr much longer. Halving the peak
+# roughly cancels that for the early iterations and leaves this run cooler than its predecessor
+# from the midpoint on:
+#
+#     iteration      this run (1e3 iters, 5e-5)      114307 (300 iters, 1e-4)
+#            50                       4.75e-5                        8.36e-5
+#           200                       4.00e-5                        3.34e-5
+#           500                       2.50e-5                              0
+#
+# So the step is smaller everywhere except a window around iteration 150-250, where the two are
+# comparable. That window is also where the warm-start run peaked, which is worth remembering when
+# reading the first few eval tables.
 #
 # WHAT level2Silver IS: a bake we actually submitted, driven as a subprocess over the referee's
 # wire protocol. Not the checkpoint behind it - the int4 bake reproduces only ~62% of its own torch
@@ -85,6 +112,24 @@ self_play_epsilon: 1.0            # opponent samples like the agent - a fair mir
 reward_mode: margin               # own score gain minus the opponent's, per turn. Both players
                                   # score on the SAME shared connection, so this also discourages
                                   # completing a route whose path is mostly the opponent's track.
+win_bonus: 5000.0                 # terminal, in RAW SCORE UNITS: +5000 on a win, -5000 on a loss,
+                                  # 0 on a draw, applied to the final decision only. Divided by
+                                  # score_norm like every other reward, so it lands as +/-5.0.
+                                  #
+                                  # WHY: the arena ranks on match outcomes and margin does not.
+                                  # They measurably diverge - 3 of 10 pairings in a 250-game round
+                                  # robin had margin and win rate pointing opposite ways. Margin
+                                  # alone calls a +12,000 win 60x better than a +200 win; the
+                                  # ladder calls them equal and calls a +200 loss a disaster.
+                                  #
+                                  # WATCH THE SCALE. Measured on the warm start, the mean
+                                  # |discounted return| per decision is 4.34 against level2Pro but
+                                  # 0.18 against level2Silver and 0.08 in self-play. +/-5.0 is a
+                                  # nudge in the first and overwhelming in the other two - which
+                                  # is arguably right, since those are the games whose outcome is
+                                  # actually in doubt, but it makes the opponent mix matter more
+                                  # than ever. If this run goes wrong, suspect this line first:
+                                  # try 1000-2000 before abandoning the idea.
 
 # --- Network (RailroadUNet: 2 down / 2 up, conv before and after, critic off the bottleneck) ---
 base_channels: 64
@@ -98,13 +143,15 @@ games_per_iteration: 64           # 2 games per worker: enough to smooth straggl
                                   # pickling the ~8.8 MB state dict more often than necessary
 num_workers: 32                   # = nproc on this machine; games_per_iteration is a multiple
 gamma: 0.997                      # per DECISION (~2.96/turn, measured) => ~0.991 per turn
-gae_lambda: 0.95                  # NOTE: the real-reward horizon is 1/(1-gamma*lambda) ~ 19
-                                  # decisions (~6 turns), NOT 1/(1-gamma). Everything past that
-                                  # is the critic's job, and train/explained_variance is what
-                                  # tells you whether it is doing it. Raising this to 0.98 would
-                                  # roughly triple the horizon at the cost of variance - the top
-                                  # candidate experiment, deliberately NOT bundled here so the
-                                  # length and warm start can be attributed on their own.
+gae_lambda: 0.98                  # was 0.95. The real-reward horizon is 1/(1-gamma*lambda), NOT
+                                  # 1/(1-gamma): ~19 decisions (~6 turns) at 0.95, ~44 (~15 turns)
+                                  # at 0.98. Everything past that is delegated to the critic, and
+                                  # train/explained_variance says whether it is coping - it ran
+                                  # 0.94 -> 0.96 on the warm-start run, which is why spending
+                                  # critic bias for horizon is affordable here. The cost is
+                                  # advantage variance; halving lr below is the compensation.
+                                  # This also decides how much of the game feels win_bonus
+                                  # first-hand, so the two changes are coupled by construction.
 action_selection: onpolicy        # behaviour policy == policy, so the PPO ratio is unbiased
 clip_epsilon: 0.2
 ppo_epochs: 2
@@ -116,7 +163,13 @@ entropy_coef: 0.001               # exploration comes from sampling itself. Entr
                                   # early - a 1000-iteration run has far longer to collapse than
                                   # the 300 this checkpoint came from.
 max_grad_norm: 0.5
-lr: 0.0001
+lr: 0.00005                       # HALVED from 1e-4. Two reasons: gae_lambda 0.98 raises
+                                  # advantage variance, and a 1000-iteration schedule holds a
+                                  # given lr ~3.3x longer than the 300-iteration run this starts
+                                  # from (at iteration 200 this sits at ~4.0e-5 where that run
+                                  # was already at ~3.3e-5). Expect clip_frac and approx_kl to
+                                  # run lower than the warm start's - that is the halved step,
+                                  # not health, so do not read it as either.
 lr_end: 0.0                       # annealed linearly to ~0 over num_iterations
 score_norm: 1000.0                # per-turn margins are divided by this before GAE
 

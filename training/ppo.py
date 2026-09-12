@@ -85,6 +85,7 @@ def _play_one_game(
     action_selection: str = "epsilon_greedy",
     opponent_pool: Optional[Dict[str, float]] = None,
     self_play_epsilon: float = 0.0,
+    win_bonus: float = 0.0,
 ) -> Tuple[List[Transition], List[int], int]:
     """Plays one full game with the current policy, one atomic decision per PPO step.
     Returns (that game's transitions, its final [player0, player1] scores, its episode length).
@@ -182,6 +183,32 @@ def _play_one_game(
         values.append(float(value.item()))
         rewards.append(reward)
 
+    # Terminal win/loss bonus, in raw score units, applied to the final decision only.
+    #
+    # WHY: the arena ranks on match outcomes while `reward_mode: margin` optimises the score
+    # difference, and the two measurably come apart - in a 250-game round robin, 3 of 10 pairings
+    # had margin and win rate pointing in OPPOSITE directions. Margin alone says a +12,000 win and
+    # a +200 win differ by 60x; the ladder says they are worth the same, and that a +200 win and a
+    # -200 loss are the whole game. This term buys back that distinction. A draw pays nothing.
+    #
+    # SCALE, and this is the part to watch. The bonus is divided by score_norm like every other
+    # reward, so win_bonus=5000 is +-5.0 on the final step. Measured on 114307_iter300, the mean
+    # |discounted return| per decision is 4.34 against level2Pro but 0.18 against level2Silver and
+    # 0.08 in self-play - so the same bonus is a modest nudge against the builder bosses and
+    # completely dominates the signal against the contested ones. That is deliberate here (those
+    # are exactly the games whose outcome is in doubt), but it does make the opponent mix matter
+    # even more than it already did, and it is the reason per-opponent reward normalisation is
+    # worth doing before adding anything else to the reward.
+    #
+    # REACH: GAE credits a terminal reward directly over ~1/(1 - gamma*lambda) decisions and
+    # delegates the rest to the critic - ~19 decisions at lambda=0.95, ~44 at 0.98, against ~250
+    # decisions in a game. Raising gae_lambda is therefore not an independent knob from this one:
+    # it decides how much of the game actually feels the bonus first-hand.
+    if win_bonus and rewards:
+        own, foe = sim.game_state.scores[0], sim.game_state.scores[1]
+        outcome = (own > foe) - (own < foe)  # +1 win, -1 loss, 0 draw
+        rewards[-1] += outcome * win_bonus / score_norm
+
     advantages, returns = _gae(rewards, values, gamma, gae_lambda)
     transitions: List[Transition] = [
         {
@@ -208,6 +235,7 @@ def _rollout_worker(
     action_selection: str = "epsilon_greedy",
     opponent_pool: Optional[Dict[str, float]] = None,
     self_play_epsilon: float = 0.0,
+    win_bonus: float = 0.0,
 ) -> Tuple[List[Transition], List[int], int]:
     """Top-level, picklable multiprocessing worker - one game per call. Always runs on CPU
     and pins itself to a single thread, for the exact same reasons as
@@ -226,6 +254,7 @@ def _rollout_worker(
         allow_skip_disrupt=allow_skip_disrupt, score_norm=score_norm, reward_mode=reward_mode,
         force_disrupt=force_disrupt, action_selection=action_selection,
         opponent_pool=opponent_pool, self_play_epsilon=self_play_epsilon,
+        win_bonus=win_bonus,
     )
 
 
@@ -247,6 +276,7 @@ def collect_rollout(
     action_selection: str = "epsilon_greedy",
     opponent_pool: Optional[Dict[str, float]] = None,
     self_play_epsilon: float = 0.0,
+    win_bonus: float = 0.0,
 ) -> Tuple[List[Transition], List[List[int]], List[int]]:
     """Plays `games_per_iteration` full games with the current policy. Returns (all
     transitions across all games, each game's final [player0, player1] scores, each game's
@@ -265,9 +295,12 @@ def collect_rollout(
         results = pool.starmap(
             _rollout_worker,
             [
+                # POSITIONAL - starmap, so this tuple must track _rollout_worker's signature
+                # exactly. A new parameter goes on the end of both, or every argument after the
+                # insertion point silently shifts by one.
                 (state_dict_cpu, model_kwargs, env_kwargs, gamma, gae_lambda, epsilon, s,
                  allow_skip_disrupt, score_norm, reward_mode, force_disrupt, action_selection,
-                 opponent_pool, self_play_epsilon)
+                 opponent_pool, self_play_epsilon, win_bonus)
                 for s in seeds
             ],
         )
@@ -277,7 +310,7 @@ def collect_rollout(
                            allow_skip_disrupt=allow_skip_disrupt, score_norm=score_norm,
                            reward_mode=reward_mode, force_disrupt=force_disrupt,
                            action_selection=action_selection, opponent_pool=opponent_pool,
-                           self_play_epsilon=self_play_epsilon)
+                           self_play_epsilon=self_play_epsilon, win_bonus=win_bonus)
             for s in seeds
         ]
 

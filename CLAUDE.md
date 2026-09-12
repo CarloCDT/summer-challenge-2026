@@ -156,6 +156,13 @@ Three things are going on, and all three are worth carrying:
   pairings had margin and win rate pointing in opposite directions (`student_full` loses the
   teacher by −238 on score while winning 0.52 of matches).
 
+**Rollout games are not reproducible from a seed under `action_selection: onpolicy`.** The
+per-game seed fixes the map and the opponent, but the action itself comes from
+`dist.sample()`, which draws on the **global torch RNG** — so replaying one seed twice gives
+different games and different lengths. Found 2026-09-11 by an A/B test that silently compared two
+different games. Use `action_selection: epsilon_greedy` with `epsilon: 0.0` (pure argmax) when you
+need two rollouts to be comparable.
+
 **Head-to-head is the sharper instrument.** `scratchpad/roundrobin.py` plays every agent against
 every other, both seats, and separates checkpoints that a fixed-boss table shows as identical.
 Two agents with the same weights played against each other score 0:0 on every seed — they pick
@@ -388,12 +395,33 @@ python3 compare_agents.py i200=checkpoints/20260911-114307_iter200.pt \
   everything we now train, so it measures progress against a fixed bar, not generalisation.
 - **Held-out eval**: keep 2–3 opponents *out* of the training pool. Right now `eval_bosses` and the
   training pool are nearly the same set, so the table structurally cannot detect pool overfitting.
-- **Terminal win bonus** in the reward — the arena ranks on match outcomes, we optimise margin, and
-  they measurably diverge. Add it before any larger reward rewrite.
-- **Per-opponent reward normalisation** — the clean fix for the 12.9x spread in return scale across
-  the pool. A log-ratio reward was analysed and **rejected**: the smoothing constant is a dial
-  between "shut-outs explode" (spread 35x) and "literally margin/c", with a best case of 11.0x
-  against margin's 12.9x.
+- ~~**Terminal win bonus**~~ — BUILT 2026-09-11. `win_bonus` (raw score units, `+win_bonus` on a
+  win, `-win_bonus` on a loss, 0 on a draw) is added to the final decision's reward in
+  `ppo.py::_play_one_game`, then divided by `score_norm` like everything else. Default 0, so every
+  existing config is unchanged; `ppo_28ch_vs_silver_1k.yaml` sets 5000. Two things to know. It
+  interacts with `gae_lambda`, because GAE credits a terminal reward directly over only
+  `1/(1-γλ)` decisions — measured on a 277-decision game, the last 19 decisions absorb **64%** of
+  the bonus at λ=0.95 but only **36%** at λ=0.98, so raising λ is what spreads it back over the
+  game. And it lands unevenly across the pool: ±5.0 against mean |return| per decision of 4.34
+  (level2Pro) but 0.18 (level2Silver) and 0.08 (self-play). Expect the critic to take it badly at
+  first — on a scratch run, value loss went 0.09 → 1.4 and explained variance 0.97 → ~0.8.
+- **Per-opponent reward normalisation** — the clean fix for the spread in return scale across the
+  pool, and **measured 2026-09-11 to be worse than the 12.9x previously filed**. Advantages are
+  normalised ONCE globally over the mixed batch (`ppo.py:331`), so an opponent's influence is set
+  by its return magnitude, not by its pool weight. On `114307_iter300`, 6 games each:
+
+  | opponent | pool weight | mean abs return | share of the batch's advantage mass |
+  |---|---|---|---|
+  | level2Pro | 0.10 | 4.34 | 34.3% |
+  | level2ProMax | 0.20 | 1.91 | 35.4% |
+  | level2Silver | 0.50 | 0.18 | 23.6% |
+  | self | 0.20 | 0.08 | 6.7% |
+
+  The pool is weighted 50% to `level2Silver` *because* it is the only contested opponent, and it
+  contributes less gradient than `level2Pro` at a fifth of the weight. Self-play gets 6.7% for 20%
+  of the compute. The weights do not do what the config comment says they do. A log-ratio reward
+  was analysed and **rejected**: the smoothing constant is a dial between "shut-outs explode"
+  (spread 35x) and "literally margin/c", with a best case of 11.0x against margin's 12.9x.
 - `gae_lambda` 0.95 → 0.98 (roughly triples the real-reward horizon; costs variance).
 - Potential-based shaping on the scoring-rate derivative — policy-invariant so it is safe, but its
   upside shrank once EV reached 0.98.
