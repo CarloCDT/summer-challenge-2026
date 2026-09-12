@@ -353,16 +353,26 @@ a **217-parameter** logistic probe on the same pooled bottleneck against real ga
 **90,861 characters**, and the policy stays byte-identical to `submission.py` (184 of 184 turns
 over two full games). stderr shows up in CodinGame's replay viewer.
 
-**The probe found no signal on the student, and that is the honest result.** 90 games vs
-`level2Silver`: every penalty setting, and every principal-component count from 1 to 32, scored
-**worse on held-out games than predicting the base rate**. So selection returns the base rate and
-the printed probability is a constant. Nothing ever asked the student's features to encode who is
-winning — it was distilled on policy logits alone. Three guards were added because the first three
-attempts each produced a confident wrong number instead: the validation split is **by game and
-stratified by outcome** (a random split gave a 0.49 train against 0.67 held-out base rate, which
-swamped the score), **"predict the base rate" is an explicit candidate** so the probe can never be
-worse than it, and **diverged fits are discarded** rather than winning on a nonsense Brier. The
-collected features are cached to `<out>.probe.npz`, so re-fitting is free.
+**The student's NN features predict the winner no better than a coin, and the score margin does
+it well.** The probe's columns are [216 pooled NN dims | score margin | turn] and the subset is
+selected on held-out games. 100 games vs `level2Silver`:
+
+| features | held-out Brier | note |
+|---|---|---|
+| base rate only | 0.2481 | the floor |
+| NN features only | 0.2481 | loses to the floor, rejected |
+| **margin + turn** | **0.1472** | selected, accuracy 0.774 |
+
+So the printed probability is driven by the score margin and the turn, **not by the network**. That
+is consistent with everything else about this checkpoint: distilled on policy logits alone, value
+head never given a gradient. Note also that fitting all 218 columns together is *worse* than
+fitting two of them — 216 uninformative dimensions bury the pair that work and the combined fit
+collapsed to the base rate — which is why the column subset is a selected hyperparameter and not an
+assumption. Four guards were added because the first four attempts each produced a confident wrong
+number: the split is **by game and stratified by outcome** (a random split gave a 0.49 train
+against 0.67 held-out base rate, which swamped the score), **"predict the base rate" is an explicit
+candidate**, **diverged fits are discarded**, and **the column subset is selected**. Features cache
+to `<out>.probe.npz`, so re-fitting is free.
 
 **The cheap test of whether `win_bonus` worked** is to re-fit this probe on a checkpoint from the
 1k run. That reward puts the match outcome directly into the return, so if its features still

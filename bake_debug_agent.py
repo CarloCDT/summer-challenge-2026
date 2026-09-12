@@ -35,15 +35,26 @@ not predict rank. `--probe` drops the value head entirely and fits a 217-paramet
 on the SAME pooled bottleneck, against actual game outcomes. That lands at ~91k, and the policy
 stays byte-identical to `submission.py` (verified: 184 of 184 turns over two full games).
 
-Measured on `144318-distill_iter50`, 90 games vs level2Silver, the probe found NOTHING: every
-penalty setting, and every principal-component count from 1 to 32, scored WORSE on held-out games
-than simply predicting the base rate. Selection therefore returns the base rate, and the printed
-probability is a constant. That is the honest answer, not a bug - the student was distilled on
-policy logits alone, so nothing ever asked its features to encode who is winning. Three guards
-exist because the first three attempts each produced a confident wrong number instead: the split
-is by GAME and stratified by outcome (a random split gave a 0.49 train against 0.67 held-out base
-rate, which swamped the score), "predict the base rate" is an explicit candidate so the probe can
-never be worse than it, and diverged fits are discarded rather than winning on a nonsense Brier.
+The probe's features are [216 pooled NN dims | score margin | turn], and WHICH SUBSET to use is
+selected on held-out games alongside the penalty, because the answer is not what you would guess.
+Measured on `144318-distill_iter50`, 100 games vs level2Silver:
+
+    NN features only     held-out Brier 0.2481   (loses to the base rate; selection rejects it)
+    margin + turn only   held-out Brier 0.1472   <- selected, accuracy 0.774
+    base rate only       held-out Brier 0.2481
+
+So the network contributes NOTHING to predicting the winner here, and the working readout is score
+margin and turn. That is consistent with everything else about this checkpoint: it was distilled on
+policy logits alone and its value head never received a gradient, so nothing ever asked its
+features to encode who is winning. Fitting all 218 columns under one penalty is worse than fitting
+two of them - 216 uninformative dimensions bury the pair that work, and the combined fit collapsed
+to the base rate - which is exactly why the column subset is a selected hyperparameter.
+
+Four guards exist because the first four attempts each produced a confident wrong number instead:
+the split is by GAME and stratified by outcome (a random split gave a 0.49 train against 0.67
+held-out base rate, which swamped the score); "predict the base rate" is an explicit candidate, so
+the probe is never worse than a constant; diverged fits are discarded rather than winning on a
+nonsense Brier; and the column subset is selected rather than assumed.
 
 STDERR IS NOT FREE. A referee spawns this with stderr on a pipe and may not drain it until the
 process exits (`railroad_env/opponent.py` only reads it on failure). At ~110 bytes a turn over 100
@@ -171,9 +182,10 @@ def collect_calibration(model, kwargs, episodes, opponent, force_disrupt, seed0=
 def collect_probe_data(model, kwargs, episodes, opponent, force_disrupt, seed0=95000):
     """Per decision: the 216-dim pooled bottleneck the value head sees, plus who won the game.
 
-    Returns (X, y, game_id). `game_id` matters - the validation split must be by GAME, because
-    every decision in one game shares one outcome. Splitting by row would put near-duplicate
-    states on both sides and report a fantasy score."""
+    Returns (X, y, game_id) where X is [216 pooled NN dims | score margin | turn]. `game_id`
+    matters - the validation split must be by GAME, because every decision in one game shares one
+    outcome. Splitting by row would put near-duplicate states on both sides and report a fantasy
+    score."""
     import torch.nn.functional as F
     from railroad_env import RailroadGymEnv
     from training.agent_model import VALUE_POOL_HW
@@ -198,7 +210,15 @@ def collect_probe_data(model, kwargs, episodes, opponent, force_disrupt, seed0=9
                     logits, _ = model(torch.from_numpy(sim.get_encoded_state()).unsqueeze(0),
                                       torch.from_numpy(mask).unsqueeze(0))
                     f = F.adaptive_avg_pool2d(grab["b"], VALUE_POOL_HW).flatten()
-                rows.append(f.numpy().copy())
+                # The last two columns are the WIRE features - current score margin and turn -
+                # scaled the way channels 26/27 scale them. They cost nothing at runtime and they
+                # are the obvious predictors of who wins; leaving them out was why the first probe
+                # found nothing and printed a constant.
+                g_ = sim.game_state
+                rows.append(np.concatenate([
+                    f.numpy(),
+                    [(g_.scores[0] - g_.scores[1]) / 10000.0, g_.turn / 100.0],
+                ]))
                 sim.apply(_decode_action(int(torch.argmax(logits.flatten(1), dim=1).item()),
                                          mask.shape, sim.pad_offsets))
             gs = sim.game_state
@@ -251,18 +271,33 @@ def fit_probe(X, y, gid, l2_grid=(1.0, 1e2, 1e4, 1e6), iters=800, stride=5, lr=0
     best = (brier(zero, np.log(base / (1 - base))), "base rate only",
             zero, np.log(base / (1 - base)))
 
-    for lam in l2_grid:
-        w, b = np.zeros(Xtr.shape[1]), 0.0
-        decay = min(0.99, lr * lam / len(ytr))
-        for _ in range(iters):
-            e = _sigmoid(Xtr @ w + b) - ytr
-            w = w * (1.0 - decay) - lr * (Xtr.T @ e / len(ytr))
-            b -= lr * e.mean()
-        if not (np.all(np.isfinite(w)) and np.isfinite(b)):
+    # WHICH COLUMNS is a hyperparameter, not a given. The last two are the wire features (score
+    # margin, turn); the rest are the pooled bottleneck. Fitting all of them under one global
+    # penalty let 216 uninformative NN dimensions bury the two that work: measured, margin+turn
+    # alone scored 0.1472 against a 0.2481 base rate while the combined fit fell back to the base
+    # rate entirely. Selecting the subset on held-out games fixes that and costs nothing.
+    n = X.shape[1]
+    groups = (("all features", np.arange(n)),
+              ("NN features", np.arange(n - 2)),
+              ("margin+turn", np.arange(n - 2, n)))
+    for gname, cols in groups:
+        if len(cols) == 0:
             continue
-        sc = brier(w, b)
-        if sc < best[0]:
-            best = (sc, f"L2 {lam:g}", w, b)
+        Xg, Xvg = Xtr[:, cols], Xva[:, cols]
+        for lam in l2_grid:
+            w, b = np.zeros(len(cols)), 0.0
+            decay = min(0.99, lr * lam / len(ytr))
+            for _ in range(iters):
+                e = _sigmoid(Xg @ w + b) - ytr
+                w = w * (1.0 - decay) - lr * (Xg.T @ e / len(ytr))
+                b -= lr * e.mean()
+            if not (np.all(np.isfinite(w)) and np.isfinite(b)):
+                continue
+            sc = float(np.mean((_sigmoid(Xvg @ w + b) - yva) ** 2))
+            if sc < best[0]:
+                full = np.zeros(n)
+                full[cols] = w
+                best = (sc, f"{gname}, L2 {lam:g}", full, b)
 
     sc, chosen, w, b = best
     base_va = float(np.mean((ytr.mean() - yva) ** 2))
@@ -315,15 +350,15 @@ def _dbg_apool(x,ph,pw):
     return o
 
 def _dbg_value(bo):
-    """A logistic probe fitted on game OUTCOMES, reading the same pooled bottleneck the value
-    head reads. Returns a logit, not a value: P(win) = sigmoid(this). 217 parameters against the
-    value head's 27,905, which is what keeps this file under CodinGame's 100k character cap."""
-    return float(_DBG_PW@_dbg_apool(bo,_DBG_VPH,_DBG_VPW).reshape(-1).astype(np.float64)+_DBG_PB)
+    """The pooled bottleneck the value head would read. The probe's logit is built in the main
+    loop instead of here, because its last two features are the score margin and the turn, which
+    live on the wire rather than in the network."""
+    return _dbg_apool(bo,_DBG_VPH,_DBG_VPW).reshape(-1).astype(np.float64)
 
 '''
 
 _MAIN_FWD_OLD = '''    logits=_fwd(observe(track,inst,inked_z,active,my_score-foe_score,turn))'''
-_MAIN_FWD_NEW = '''    logits,_dbg_val=_fwd(observe(track,inst,inked_z,active,my_score-foe_score,turn))'''
+_MAIN_FWD_NEW = '''    logits,_dbg_raw=_fwd(observe(track,inst,inked_z,active,my_score-foe_score,turn))'''
 
 _PRINT_OLD = '''    print(";".join(acts) if acts else "WAIT", flush=True)
     turn+=1'''
@@ -337,6 +372,13 @@ _PRINT_NEW = '''    _dbg_cmd=";".join(acts) if acts else "WAIT"
         print("!! P(win) is UNCALIBRATED (baked with --calibrate 0): it is a raw sigmoid of an "
               "unbounded value, not a probability. Ordering is meaningful, the number is not.",
               file=sys.stderr, flush=True)
+    # In probe mode _dbg_raw is the pooled feature vector and the margin/turn columns are
+    # appended here; otherwise it is the value head's scalar and _DBG_A/_DBG_B rescale it.
+    if _DBG_LBL=="logit":
+        _dbg_val=float(_DBG_PW@np.concatenate([_dbg_raw,
+            [(my_score-foe_score)/10000.0,turn/100.0]])+_DBG_PB)
+    else:
+        _dbg_val=_dbg_raw
     _dbg_p=1.0/(1.0+np.exp(-max(-60.0,min(60.0,_DBG_A*_dbg_val+_DBG_B))))
     # The parentheses are load-bearing: % binds tighter than +, so without them the format
     # applies to the last literal alone and the line dies with "not all arguments converted".
@@ -474,9 +516,12 @@ def main():
         if len(np.unique(y)) < 2:
             raise SystemExit("\nevery probe game had the same outcome - there is nothing to fit. "
                              "Raise --probe, or pick an opponent that contests this checkpoint.")
+        # Which half is doing the work? NN features alone, wire features alone, or both. This is
+        # free once the data is collected and it is the only way to know whether the network is
+        # contributing anything at all.
         w, b, rep = fit_probe(X, y, gid)
         probe = (w, b)
-        print(f"\n  probe: 217 params, selected {rep['chosen']}, "
+        print(f"\n  probe: {X.shape[1] + 1} params, selected {rep['chosen']}, "
               f"{rep['train_games']} train / {rep['val_games']} held-out games "
               f"(base rate {rep['train_base']:.2f} train / {rep['val_base']:.2f} held-out)")
         print(f"  HELD-OUT Brier {rep['val_brier']:.4f}  "
@@ -530,7 +575,8 @@ def main():
                              cal_a, cal_b, calibrated or probe is not None, probe)
     Path(args.out).write_text(src)
     n_policy = sum(w.size + b.size for _, w, b in BA.fold_batchnorm(sd))
-    n_value = 217 if probe is not None else sum(w.size + b.size for _, w, b in value_params(sd))
+    n_value = (len(probe[0]) + 1) if probe is not None else sum(
+        w.size + b.size for _, w, b in value_params(sd))
     kind = "probe" if probe is not None else "value head"
     print(f"\npolicy params {n_policy:,} + {kind} {n_value:,} = {n_policy + n_value:,}")
     print(f"wrote {args.out}: {len(src):,} chars  [{args.quant}]")
