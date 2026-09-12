@@ -45,6 +45,7 @@ truth — check it rather than guessing. `verify_rules.py` asserts our port agai
 | `railroad_env/wire.py` | the referee's stdin/stdout protocol, shared by `test_submission.py` and the `level2Silver` boss |
 | `bake_agent.py` | checkpoint → self-contained `submission.py` |
 | `baselines/` | bakes we actually submitted, frozen byte-for-byte — the `level2Silver` boss reads one; see its README |
+| `bake_debug_agent.py` | `bake_agent.py` **plus the value head** — prints V and a fitted P(win) to stderr each turn. Debugging only, never submitted |
 | `test_submission.py` | runs a baked file over the referee's wire protocol |
 | `evaluate_checkpoints.py` | greedy boss table on fixed seeds |
 | `compare_agents.py` | head-to-head round robin, `.pt` or baked `.py`, both seats — **the instrument that separates candidates the boss table cannot** |
@@ -313,6 +314,33 @@ incompressible; trained weights zlib to ~0.75 of that. At 28 channels, `(34,34,3
 guarantee. About 2,000 characters of the runtime are comments, which strip out if you need room.
 Measured: the shipped 28-channel `(34,34,36)` student bakes to **87,060 characters**, ~13k under
 the cap — the worst-case estimate holds, but this is the layout with the least headroom.
+
+**Reading the critic (`bake_debug_agent.py`, 2026-09-11).** The shipped bake drops the value
+head, so `submission.py` can say what it did but never what it thought. This script bakes the
+critic back in and prints one stderr line per turn: score, V, a fitted P(win), and the commands.
+Three things it established.
+
+**Quantization is a choice between the two heads.** Baked value against torch value on the same
+state, `114307_iter300`, 30 turns: fp16 is **0.20% max / 0.03% mean** relative error, int4 is
+**42.8% max / 5.5% mean**. 4-bit weights wreck a scalar regression in a way they demonstrably do
+not wreck an argmax over ~1800 cells. So this tool defaults to **fp16** (trust V, moves differ
+slightly from what ships) and int4 is for debugging the policy (exact shipped moves, V is fiction).
+
+**P(win) is fitted, not read off the net.** The value head is unbounded and regresses discounted
+return, so the script plays `--calibrate N` games and fits `sigmoid(a*V + b)`. The effective
+sample size is **N, not N × decisions** — one outcome per game. And it is only valid against the
+opponent it was fitted on. First fit, 24 games vs `level2Silver`: Brier 0.0788 against a base-rate
+0.0829, with a 0.909 base win rate, so it is barely better than guessing the base rate and the
+printed probabilities sit near 1.0 even at 0:0. The script now warns on a one-sided or
+uninformative fit. **A checkpoint trained with `win_bonus` carries the outcome in its return
+directly, so re-fit after that run and compare Brier — that is the cheap test of whether the bonus
+did what it was added for.**
+
+**Do not enlarge that stderr line.** A referee leaves stderr on a pipe it may not drain until the
+process exits (`railroad_env/opponent.py` reads it only on failure). Measured: 7,149 bytes over a
+60-turn game, so a full 100-turn game stays well under a typical 64 KB pipe buffer. Verified by
+running a game with stderr deliberately undrained. A per-cell dump would deadlock the agent
+mid-game rather than fail cleanly.
 
 **Speed.** The baked agent must answer in **50 ms per turn**, 1000 ms on the first. The forward
 pass was 95% of the turn and is now 7.3x faster: one matmul per convolution against a

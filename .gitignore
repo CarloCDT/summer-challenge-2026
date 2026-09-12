@@ -10,6 +10,11 @@
 # code, `submission.py`, and the frozen bakes under `baselines/`.
 checkpoints/
 
+# Debug bakes. `bake_debug_agent.py` output is ~5 MB of fp16 weights and is regenerable in one
+# command, so the script is tracked and its output is not. It is also NOT a submission: it carries
+# the value head, which no submission ever should.
+debug_submission.py
+
 # Byte-compiled
 __pycache__/
 *.py[cod]
