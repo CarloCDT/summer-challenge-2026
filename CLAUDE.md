@@ -336,6 +336,15 @@ uninformative fit. **A checkpoint trained with `win_bonus` carries the outcome i
 directly, so re-fit after that run and compare Brier — that is the cheap test of whether the bonus
 did what it was added for.**
 
+**Which checkpoint to point it at.** For reading the critic, a PPO teacher at fp16. For the
+student (`144318-distill_iter50`, what `submission.py` was baked from) use `--quant int4`: it is
+quantization-aware at int4, so int4 is its native precision and the debug bake then picks
+**identical commands to `submission.py`** — verified over all 60 turns of a game — which makes it
+an exact stand-in for the shipped agent. Its V is a random readout though (see the distillation
+item in the backlog), so calibrate before believing any number: uncalibrated, `sigmoid(V)` sat at
+0.50 for a whole game even at +2765. Calibrated on 24 games vs `level2Silver` (base rate 0.72,
+Brier 0.184 against 0.202) it at least moves, 0.60 to 0.87 across a game.
+
 **Do not enlarge that stderr line.** A referee leaves stderr on a pipe it may not drain until the
 process exits (`railroad_env/opponent.py` reads it only on failure). Measured: 7,149 bytes over a
 60-turn game, so a full 100-turn game stays well under a typical 64 KB pipe buffer. Verified by
@@ -421,6 +430,14 @@ python3 compare_agents.py i200=checkpoints/20260911-114307_iter200.pt \
   still a league of **one** — a second rung is a copied file plus a subclass pinning its own
   `DEFAULT_PATH`. Note none of it is held out: the frozen bake's teacher is the ancestor of
   everything we now train, so it measures progress against a fixed bar, not generalisation.
+- **Distil the value head too.** `distill.py`'s loss is KL on the policy logits alone, so the
+  student's value head never receives a gradient and keeps its random initialisation. Measured on
+  `144318-distill_iter50` over 652 states, that is less useless than it sounds — the student's
+  value still tracks the teacher's at **+0.87** correlation, because the *features* were distilled
+  even though the head was not (an untrained net's value is essentially constant, std 0.0001,
+  against the student's 0.056). But the scale is ~80x off, so it is only usable after a fit. A
+  value-MSE term against the teacher would cost almost nothing and make the student's critic real,
+  which matters more now that `win_bonus` puts outcome information into the teacher's value.
 - **Held-out eval**: keep 2–3 opponents *out* of the training pool. Right now `eval_bosses` and the
   training pool are nearly the same set, so the table structurally cannot detect pool overfitting.
 - ~~**Terminal win bonus**~~ — BUILT 2026-09-11. `win_bonus` (raw score units, `+win_bonus` on a
