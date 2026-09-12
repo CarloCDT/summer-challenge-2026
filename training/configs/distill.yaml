@@ -35,15 +35,16 @@
 # checkpoint is ARENA-VALIDATED: distilled, baked and submitted, it moved the CodinGame ranking up
 # substantially. That is the only checkpoint here with evidence from outside our own eval.
 #
-#   checkpoint    level2ProMax        level2Silver (vs the CURRENT bake, 25 games)
+#   checkpoint    level2ProMax        level2Silver (25 games, vs the bake now frozen in baselines/)
 #   iter200        +4164 1.00          +285 0.68     <- arena-validated
 #   iter250        +3645 1.00          +461 0.72
 #   iter300        see below - measure before choosing
 #
-# WARNING when reading that run's in-run eval table: submission.py was re-baked at 15:06, partway
-# through, and level2Silver reads it live. Rows before and after are scored against DIFFERENT
-# opponents - iter200 shows +1667 against the old bake and +285 against the new one. Always
-# re-measure candidates against one fixed opponent (evaluate_checkpoints.py) before comparing.
+# WARNING when reading the in-run eval table of any run from BEFORE 2026-09-11: level2Silver read
+# submission.py live back then, and it was re-baked at 15:06 partway through that run. Rows before
+# and after are scored against DIFFERENT opponents - iter200 shows +1667 against the old bake and
+# +285 against the new one. The tier is frozen now, so tables from here are comparable, but always
+# re-measure old candidates against it (evaluate_checkpoints.py) before trusting a comparison.
 teacher_checkpoint: checkpoints/20260911-114307_iter200.pt
 
 # --- Student ---
@@ -75,11 +76,11 @@ opponent: level2                  # fallback only; opponent_pool overrides it pe
 # knows what to do there; that knowledge cannot transfer if those positions are absent from the
 # data. This mirrors the mix the agent will actually face.
 #
-# Note this makes distillation depend on submission.py (via level2Silver), exactly as
-# ppo_28ch_vs_silver.yaml does: re-baking mid-run changes the syllabus underneath you.
+# level2Silver here is the FROZEN bake under baselines/, not the live submission.py, so the syllabus
+# no longer shifts under a re-bake the way it did before 2026-09-11.
 opponent_pool:
   level2ProMax: 0.35              #   the inking endgame - the states that were missing entirely
-  level2Silver: 0.30              #   the currently baked agent, i.e. the bar to clear
+  level2Silver: 0.30              #   the frozen rank-288 bake, i.e. the bar to clear
   level2Pro: 0.20                 #   pure builder, keeps the build-out states represented
   level2: 0.15                    #   the shipped League 2 boss
 
@@ -105,12 +106,11 @@ max_grad_norm: 1.0
 # is the ground truth - agreement is a proxy, score is the thing that matters.
 eval_every: 25
 eval_episodes: 100
-eval_bosses: level1,level1Pro,level2,level2Pro,level2ProMax,level2Silver,level2SilverPro
-# The two Silver tiers are the only contested opponents (the PPO teacher wins 1.00 against every
-# other tier), so without them this table cannot tell two students apart. level2Silver moves with
-# whatever is baked, which is the bar a new student has to clear; level2SilverPro is the frozen
-# rank-288 bake under baselines/ and so is the column that stays comparable across runs. They
-# read the same bytes until the next re-bake. Eval only; the pool above is unchanged.
+eval_bosses: level1,level1Pro,level2,level2Pro,level2ProMax,level2Silver
+# level2Silver is the only opponent that is actually contested (the PPO teacher wins 1.00 against
+# every other tier), so without it this table cannot tell two students apart. It now reads a
+# FROZEN bake under baselines/ (the rank-288 one) rather than the live submission.py, so a
+# re-bake no longer moves the bar mid-comparison and the column survives across runs.
 
 # --- Bookkeeping ---
 checkpoint_every: 25

@@ -245,20 +245,34 @@ def _legal_placements(state: GameState):
     return placements
 
 
-# The last two "boss" tiers, and the strongest: our own trained agents played as opponents.
+# The last and strongest "boss" tier: one of our own trained agents played as an opponent.
 # level1/level2 are the challenge's own shipped AIs; every "Pro"/"Silver" tier is ours, and
 # all of them are considerably stronger than anything the real ladder fields.
 class BakedSubmissionOpponent(OpponentStrategy):
-    """`level2Silver`: the baked submission file itself, played as a boss.
+    """`level2Silver`: a bake we actually submitted, played as a boss.
 
-    This drives the real `submission.py` as a subprocess over the referee's wire protocol, and
-    that is the whole point - it is the shipped agent, not an approximation of it. Loading the
-    checkpoint into torch instead would NOT be the same player: submission.py is int4-quantized
-    with BatchNorm folded, and it reproduces only ~62% of the torch model's argmax moves (see
-    bake_agent.quantize). Identical score, different moves - so for a baseline that is supposed
-    to be "what we are sending", only the file will do.
+    This drives a real baked agent as a subprocess over the referee's wire protocol, and that is
+    the whole point - it is a shipped agent, not an approximation of one. Loading the checkpoint
+    into torch instead would NOT be the same player: a bake is int4-quantized with BatchNorm
+    folded and reproduces only ~62% of the torch model's argmax moves (see bake_agent.quantize).
+    Identical score, different moves - so for a baseline that is supposed to be "what we sent",
+    only the file will do.
 
-    Costs about 1.0s per 100-turn game, comparable to level2Pro's 0.92s, because the submission
+    It reads a FROZEN copy under `baselines/`, NOT the live `submission.py`, and that distinction
+    is the whole reason `baselines/` exists. This boss used to default to `submission.py`, which
+    made it live state: re-baking silently changed the training opponent and the eval baseline of
+    anything then running, and `eval/level2Silver/margin` stopped being comparable across the
+    change. Pointed at a file nothing overwrites, the column means the same thing across re-bakes
+    and across runs.
+
+    The default is the bake that reached CodinGame rank ~288, the only agent in this repo with
+    evidence from outside our own eval table. To raise the bar deliberately, copy the new bake into
+    `baselines/` and change DEFAULT_PATH - one line, and it should stay a decision, because it moves
+    every number this tier has ever produced. `submission_path` still overrides per instance, so
+    `opponent_kwargs={'submission_path': 'submission.py'}` gets the old live behaviour back for a
+    one-off comparison.
+
+    Costs about 1.0s per 100-turn game, comparable to level2Pro's 0.92s, because a baked agent
     answers a turn in single-digit milliseconds by design.
 
     The process is spawned lazily on the first turn, so a GameSimulator that deep-copies this
@@ -268,9 +282,12 @@ class BakedSubmissionOpponent(OpponentStrategy):
     rather than silently desyncing.
     """
 
-    #: Subclasses pin a different file and a different tier name; everything else is shared.
-    TIER = "level2Silver"
-    DEFAULT_PATH = Path(__file__).resolve().parent.parent / "submission.py"
+    #: A frozen bake, never the live submission.py - see the class docstring.
+    DEFAULT_PATH = (
+        Path(__file__).resolve().parent.parent
+        / "baselines"
+        / "20260911-144318-distill_iter50_rank288.py"
+    )
 
     def __init__(self, seed: int = None, submission_path: str = None):
         super().__init__(seed)
@@ -281,7 +298,7 @@ class BakedSubmissionOpponent(OpponentStrategy):
     def __deepcopy__(self, memo):
         if self._started:
             raise RuntimeError(
-                f"{self.TIER} cannot be copied once its game has started - the "
+                "level2Silver cannot be copied once its game has started - the "
                 "subprocess holds turn state that cannot be forked. This opponent does not "
                 "support GameSimulator.clone()/MCTS search."
             )
@@ -295,8 +312,10 @@ class BakedSubmissionOpponent(OpponentStrategy):
     def _start(self, state: GameState, player_id: int) -> None:
         if not self.submission_path.exists():
             raise FileNotFoundError(
-                f"{self.TIER} needs a baked agent at {self.submission_path}. Bake one with "
-                f"`python3 bake_agent.py <checkpoint> -o submission.py`, or pass "
+                f"level2Silver needs a baked agent at {self.submission_path}. That is a frozen "
+                f"baseline, so the fix is to restore the file (it is tracked in git), not to "
+                f"re-bake it. To play a different agent as this boss, bake one with `python3 "
+                f"bake_agent.py <checkpoint> -o <file>` and pass "
                 f"opponent_kwargs={{'submission_path': ...}}."
             )
         self._proc = subprocess.Popen(
@@ -316,7 +335,7 @@ class BakedSubmissionOpponent(OpponentStrategy):
             self._start(state, player_id)
         if self._proc is None:
             raise RuntimeError(
-                f"{self.TIER} was asked for a turn after its game ended. The subprocess is "
+                "level2Silver was asked for a turn after its game ended. The subprocess is "
                 "closed on the turn that reaches max_turns and cannot be resumed - a fresh one "
                 "would restart its internal turn counter and play a different game. Build a new "
                 "opponent per game."
@@ -355,40 +374,7 @@ class BakedSubmissionOpponent(OpponentStrategy):
             pass
 
 
-class FrozenSubmissionOpponent(BakedSubmissionOpponent):
-    """`level2SilverPro`: a submission we actually sent, kept byte-for-byte and never re-baked.
-
-    Same mechanism as `level2Silver` - the file driven as a subprocess over the referee's wire
-    protocol - and deliberately the opposite choice of file. `level2Silver` reads `submission.py`,
-    which is live state, so it TRACKS whatever is currently baked and `eval/level2Silver/*` stops
-    being comparable the moment you re-bake. This one reads a frozen copy under `baselines/`, so it
-    is a fixed rung: a margin against it means the same thing next month as it does today.
-
-    It defaults to the bake that reached **CodinGame rank ~288**, from teacher
-    `20260911-114307_iter200.pt`, which makes it the one baseline in this repo with evidence from
-    outside our own eval table. Note that is the same file `level2Silver` reads *today*, so the two
-    tiers score identically until the next re-bake - verified over 12 seeds, every column equal -
-    and after one, the gap between the columns is exactly what the re-bake changed.
-
-    It is the FILE, not the checkpoint behind it, for the reason `level2Silver` is: the bake is
-    int4 with BatchNorm folded and reproduces only ~62% of the torch model's argmax moves, so
-    loading that checkpoint into torch would be a different player. What we want frozen is what we
-    sent.
-
-    See `baselines/README.md` for how to add another rung - a population of past selves is the
-    "league" in CLAUDE.md's backlog, and this is its first member.
-    """
-
-    TIER = "level2SilverPro"
-    DEFAULT_PATH = (
-        Path(__file__).resolve().parent.parent
-        / "baselines"
-        / "20260911-144318-distill_iter50_rank288.py"
-    )
-
-
-BOSS_TIERS = ("level1", "level1Pro", "level2", "level2Pro", "level2ProMax", "level2Silver",
-              "level2SilverPro")
+BOSS_TIERS = ("level1", "level1Pro", "level2", "level2Pro", "level2ProMax", "level2Silver")
 
 OPPONENT_STRATEGIES = {
     # Faithful ports of the challenge's own Boss AIs
@@ -400,8 +386,7 @@ OPPONENT_STRATEGIES = {
     "level1Pro": Level1ProOpponent,           # random placements half the time, disrupts half
     "level2Pro": GreedyAutoplaceOpponent,     # cheapest-path AUTOPLACE, always building
     "level2ProMax": Level2ProMaxOpponent,     #   the same, plus deterministic disruption
-    "level2Silver": BakedSubmissionOpponent,  #   the baked submission.py itself, as a boss
-    "level2SilverPro": FrozenSubmissionOpponent,  # the frozen rank-288 bake, never re-baked
+    "level2Silver": BakedSubmissionOpponent,  #   a bake we submitted, frozen under baselines/
     "random": RandomOpponent,
     "greedy": GreedyOpponent,
     "greedy_autoplace": GreedyAutoplaceOpponent,

@@ -117,7 +117,7 @@ def evaluate_all_bosses(
 def format_eval_table(results: Dict[str, Dict[str, float]], title: str = "") -> str:
     """The table the trainers print after each checkpoint."""
     header = (
-        f"{'boss':<16}{'score':>9}{'opp':>9}{'margin':>10}{'win':>7}{'conn':>7}{'zero':>7}"
+        f"{'boss':<13}{'score':>9}{'opp':>9}{'margin':>10}{'win':>7}{'conn':>7}{'zero':>7}"
     )
     lines = []
     if title:
@@ -126,7 +126,7 @@ def format_eval_table(results: Dict[str, Dict[str, float]], title: str = "") -> 
     lines.append("-" * len(header))
     for boss, r in results.items():
         lines.append(
-            f"{boss:<16}{r['score']:>9.0f}{r['opp']:>9.0f}{r['margin']:>+10.0f}"
+            f"{boss:<13}{r['score']:>9.0f}{r['opp']:>9.0f}{r['margin']:>+10.0f}"
             f"{r['win']:>7.2f}{r['conn']:>7.0%}{r['zero']:>7.0%}"
         )
     return "\n".join(lines)

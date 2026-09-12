@@ -44,7 +44,7 @@ truth — check it rather than guessing. `verify_rules.py` asserts our port agai
 | `training/self_play_opponent.py` | drives a torch model as player 1 (the `self` pool entry) |
 | `railroad_env/wire.py` | the referee's stdin/stdout protocol, shared by `test_submission.py` and the `level2Silver` boss |
 | `bake_agent.py` | checkpoint → self-contained `submission.py` |
-| `baselines/` | bakes we actually submitted, frozen byte-for-byte — the `level2SilverPro` boss reads one; see its README |
+| `baselines/` | bakes we actually submitted, frozen byte-for-byte — the `level2Silver` boss reads one; see its README |
 | `test_submission.py` | runs a baked file over the referee's wire protocol |
 | `evaluate_checkpoints.py` | greedy boss table on fixed seeds |
 | `compare_agents.py` | head-to-head round robin, `.pt` or baked `.py`, both seats — **the instrument that separates candidates the boss table cannot** |
@@ -91,19 +91,17 @@ a different game than it trained on.
 
 ## Bosses
 
-`BOSS_TIERS = level1, level1Pro, level2, level2Pro, level2ProMax, level2Silver, level2SilverPro`
+`BOSS_TIERS = level1, level1Pro, level2, level2Pro, level2ProMax, level2Silver`
 
 - `level1` — always waits (the shipped League 1 boss).
 - `level2` — AUTOPLACE between **two random towns** every turn (the shipped League 2 boss).
 - `level2Pro` — prices every unfinished connection, commits to the cheapest. Never disrupts.
 - `level2ProMax` — ours. `level2Pro` plus: inks the region where enemy track most outnumbers its
   own, when that lead is **> 1**. Ties break to the lowest zone id, so it is deterministic.
-- `level2Silver` — **`submission.py` itself**, run as a subprocess over the referee's wire
+- `level2Silver` — **a bake we actually submitted**, run as a subprocess over the referee's wire
   protocol (`railroad_env/wire.py`, shared with `test_submission.py`). Deterministic, ~1.0 s per
-  100-turn game — on par with level2Pro.
-- `level2SilverPro` — **a submission we actually sent**, frozen under `baselines/`: the bake that
-  reached CodinGame rank ~288. Same mechanism as `level2Silver` (the file, over the wire protocol)
-  and the same ~1.0 s per game. The difference is that this copy is never overwritten.
+  100-turn game — on par with level2Pro. It reads a **frozen** copy under `baselines/`, currently
+  the one that reached CodinGame rank ~288, and **not** the live `submission.py`.
 
 `level2Silver` is deliberately the *file*, not the checkpoint behind it. Loading that checkpoint
 into torch would be a different player: the bake is int4 with BatchNorm folded and reproduces only
@@ -111,31 +109,26 @@ into torch would be a different player: the bake is int4 with BatchNorm folded a
 seat 0 through `test_submission.py` and seat 1 as `level2Silver` on the same board (5 seeds,
 23331/20845/21921/11472/23157 both ways).
 
-Two consequences of that choice. **It tracks whatever is currently baked**: re-baking
-`submission.py` silently changes this boss, so `eval/level2Silver/*` is not comparable across
-re-bakes — record which bake a number came from. And it is **stateful per game** (its own turn
-counter and route cache), so it is spawned lazily, closed on the turn that reaches `max_turns`,
-and refuses to be deep-copied mid-game — it cannot be used with `GameSimulator.clone()`/MCTS.
-Adding it to `BOSS_TIERS` also lengthens any eval that does not pin `eval_bosses` by roughly one
-second per episode.
+**It used to read `submission.py`, and that was a mistake worth understanding (changed 2026-09-11).**
+The boss was live state: re-baking silently changed the training opponent *and* the eval baseline of
+anything then running, so `eval/level2Silver/margin` was not comparable across a re-bake and every
+number had to be annotated with which bake produced it. `BakedSubmissionOpponent.DEFAULT_PATH` now
+points at `baselines/20260911-144318-distill_iter50_rank288.py`, a byte-for-byte copy of that
+submission, which nothing overwrites. Verified by removing `submission.py` from the tree entirely
+and playing a full game against `level2Silver`: it plays, unchanged. Re-baking cannot move this
+tier any more.
 
-`level2SilverPro` (added 2026-09-11) exists to fix exactly that first consequence, and it is the
-same kind of thing pointed at a different file — `baselines/20260911-144318-distill_iter50_rank288.py`
-is a byte-for-byte copy of the `submission.py` that reached **CodinGame rank ~288**. Nothing
-re-bakes it, so it is a **fixed rung** — a margin against it means the same thing next month as it
-does today — and it is the one baseline here with evidence from outside our own eval table. Keep
-the pair: `level2Silver` answers "am I beating what we would send *now*", `level2SilverPro` answers
-"am I beating what actually ranked".
+Consequences of the frozen choice. The bar **no longer rises on its own** — beating `level2Silver`
+once means beating it forever, and raising it is now a deliberate one-line edit (copy the new bake
+into `baselines/`, repoint `DEFAULT_PATH`), which is the right amount of friction because it moves
+every number this tier has ever produced. Record which baseline a table was measured against. The
+old live behaviour is still available per instance for a one-off "am I beating what we would send
+right now" check: `opponent_kwargs={'submission_path': 'submission.py'}`.
 
-It is the FILE, not the checkpoint behind it, for the same reason `level2Silver` is: loading
-`20260911-114307_iter200.pt` into torch is a different player from the int4 bake of its student.
-What we want frozen is what we sent.
-
-Until the next re-bake the two tiers read identical bytes, so they score **identically on every
-column** — verified on introduction over 12 seeds, all six columns equal. That is the correctness
-check for this tier, and after a re-bake the gap between the two columns is precisely what the
-re-bake changed. `baselines/README.md` says how to add the next rung; the subclass is
-`FrozenSubmissionOpponent`, which only pins a `DEFAULT_PATH` and a `TIER` name.
+It remains **stateful per game** (its own turn counter and route cache), so it is spawned lazily,
+closed on the turn that reaches `max_turns`, and refuses to be deep-copied mid-game — it cannot be
+used with `GameSimulator.clone()`/MCTS. Having it in `BOSS_TIERS` also lengthens any eval that does
+not pin `eval_bosses` by roughly one second per episode.
 
 `level2ProMax` finishes building around turn 25, then spends 75 turns purely inking. Only ~14%
 of the board (buildable cells in town regions) is permanently safe. It was long treated as a
@@ -349,7 +342,8 @@ iterations and is healthy throughout.** Explained variance 0.94 → **0.98**, `c
 Crucially **no cross-boss degradation**: level1/level1Pro/level2/level2Pro sit at win 1.00 on every
 checkpoint. The opponent pool fixed the failure that halved every other boss in earlier runs.
 
-**Candidate teachers, all measured against the CURRENT `level2Silver`:**
+**Candidate teachers, measured against `level2Silver`** — at the time, the live `submission.py`;
+those are the same bytes now frozen under `baselines/`, so these rows stay comparable:
 
 | checkpoint | level2ProMax | level2Silver | note |
 |---|---|---|---|
@@ -361,11 +355,9 @@ iter250 and iter300 are indistinguishable (SE ≈ 0.044). iter200 looks *worse* 
 the one that actually moved the rank — which is the whole lesson of the "our eval does not predict
 rank" warning above. Do not pick a teacher on this table alone.
 
-The bake this lineage produced is now frozen in `baselines/` and served as the `level2SilverPro`
-boss (added 2026-09-11), so every future eval table carries a column against the agent that
-actually ranked, and that column survives a re-bake. It is already in `eval_bosses` for
-`ppo_28ch_vs_silver.yaml` and `distill.yaml`; neither training pool was touched, because putting it
-in a pool would make it the syllabus rather than the exam.
+The bake this lineage produced is now frozen in `baselines/` and is what the `level2Silver` boss
+plays as (changed 2026-09-11), so every eval table from here carries a column against the agent
+that actually ranked, and a re-bake no longer moves it.
 
 **Unfinished measurement, worth redoing first.** A three-way head-to-head between the iter200 /
 iter250 / iter300 teachers was running when the session ended and did not complete. Head-to-head
@@ -389,10 +381,11 @@ python3 compare_agents.py i200=checkpoints/20260911-114307_iter200.pt \
 - **League**: sample training opponents from a *population* of past bakes rather than only the
   latest, so the agent cannot specialise against one style. `BakedSubmissionOpponent` already takes
   a `submission_path`, so `level2Silver` is a league of size one that we keep overwriting.
-  `level2SilverPro` (added 2026-09-11) is the first frozen member, and `baselines/` is where the
-  population lives — a further rung is a copied file plus a `FrozenSubmissionOpponent` subclass, no
-  new machinery. Note it is *not* held out: its teacher is the ancestor of everything we now train,
-  so it measures progress against a fixed bar, not generalisation to a stranger.
+  Half done as of 2026-09-11: `baselines/` is where the population lives and `level2Silver` reads a
+  frozen member of it rather than whatever was baked last, so the pool is at least *stable*. It is
+  still a league of **one** — a second rung is a copied file plus a subclass pinning its own
+  `DEFAULT_PATH`. Note none of it is held out: the frozen bake's teacher is the ancestor of
+  everything we now train, so it measures progress against a fixed bar, not generalisation.
 - **Held-out eval**: keep 2–3 opponents *out* of the training pool. Right now `eval_bosses` and the
   training pool are nearly the same set, so the table structurally cannot detect pool overfitting.
 - **Terminal win bonus** in the reward — the arena ranks on match outcomes, we optimise margin, and
@@ -426,8 +419,8 @@ training against 1.00 at eval; see the level2ProMax post-mortem above for what t
 **Checkpoints that matter:** `checkpoints/20260910-224257_iter200.pt` — the original +2367-on-
 level2ProMax peak that every later lineage descends from — and `20260911-114307_iter200.pt`, the
 current teacher. Do not let either get swept up in a cleanup. The same goes for
-`baselines/20260911-144318-distill_iter50_rank288.py`, which is not a checkpoint but is the
-`level2SilverPro` boss — deleting it breaks every eval that names that tier.
+`baselines/20260911-144318-distill_iter50_rank288.py`, which is not a checkpoint but **is** the
+`level2Silver` boss — deleting it breaks every eval that names that tier.
 
 **Ladder of configs**, each warm-starting from the last:
 `ppo_28ch_level1Pro.yaml` (cold start) → `ppo_28ch_level2Pro.yaml` → `ppo_28ch_level2ProMax.yaml`
@@ -438,12 +431,12 @@ current teacher. Do not let either get swept up in a cleanup. The same goes for
 **quantization-aware** student — at 87,679 characters. `force_disrupt` is recorded in that
 checkpoint, so the bake drops the SKIP_DISRUPT branch automatically.
 
-**`submission.py` is live state, not an artifact.** The `level2Silver` boss reads it at run time,
-and both `ppo_28ch_vs_silver.yaml` and `distill.yaml` put `level2Silver` in their pools — so
-re-baking silently changes the training opponent *and* the eval baseline of anything currently
-running, and `eval/level2Silver/margin` stops being comparable across the change. Check for a
-running job before overwriting it — and before submitting a new bake, copy it into `baselines/` so
-the agent it replaces stays measurable as its own tier.
+**Re-baking `submission.py` is now safe for training and eval**, which it was not before
+2026-09-11. `level2Silver` reads a frozen copy under `baselines/`, so overwriting `submission.py`
+no longer changes the training opponent or the eval baseline of a running job. Two habits still
+matter: before submitting a new bake, copy it into `baselines/` so the agent it replaces stays
+measurable, and remember that `submission.py` is what `test_submission.py` runs, so a bad bake is
+still visible there immediately.
 
 The runtime is **verified seat-invariant** — same board fed as player 0 and as player 1 with track
 owners swapped yields byte-identical commands over 150 decisions. The only absolute field on the

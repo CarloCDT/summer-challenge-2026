@@ -60,7 +60,7 @@ def main():
 
     pool = mp.get_context("spawn").Pool(processes=args.workers) if args.workers > 1 else None
     try:
-        header = f"{'checkpoint':<34}{'boss':<16}{'score':>9}{'opp':>9}{'margin':>10}{'win':>7}{'conn':>7}{'zero':>7}"
+        header = f"{'checkpoint':<34}{'boss':<13}{'score':>9}{'opp':>9}{'margin':>10}{'win':>7}{'conn':>7}{'zero':>7}"
         print(header)
         print("-" * len(header))
         for path in paths:
@@ -77,7 +77,7 @@ def main():
                 r = evaluate_vs_boss(state_dict, model_kwargs, boss, seeds, args.max_turns,
                                      allow_skip, pool, force_disrupt=force_disrupt)
                 label = Path(path).name.replace(".pt", "") if i == 0 else ""
-                print(f"{label:<34}{boss:<16}{r['score']:>9.0f}{r['opp']:>9.0f}{r['margin']:>+10.0f}"
+                print(f"{label:<34}{boss:<13}{r['score']:>9.0f}{r['opp']:>9.0f}{r['margin']:>+10.0f}"
                       f"{r['win']:>7.2f}{r['conn']:>7.0%}{r['zero']:>7.0%}"
                       f"   ({time.time() - t0:.0f}s)")
             print()

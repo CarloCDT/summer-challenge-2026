@@ -18,20 +18,22 @@
 # 600 iterations against level2ProMax alone previously halved the margin on every other boss.
 # Tune these freely - they are a starting point, not a measurement.
 #
-# WHAT level2Silver IS: submission.py itself, driven as a subprocess over the referee's wire
-# protocol. Not the checkpoint behind it - the int4 bake reproduces only ~62% of its own torch
+# WHAT level2Silver IS: a bake we actually submitted, driven as a subprocess over the referee's
+# wire protocol. Not the checkpoint behind it - the int4 bake reproduces only ~62% of its own torch
 # model's argmax moves, so the checkpoint is a different player with the same score. Verified
 # exact: identical scores playing seat 0 via test_submission.py and seat 1 as this boss across
 # 5 seeds. Costs ~1.0s per 100-turn game, on par with level2Pro.
 #
-#   !! level2Silver TRACKS WHATEVER IS CURRENTLY BAKED. Re-baking submission.py mid-run silently
-#   !! changes both the opponent AND the eval baseline, and eval/level2Silver/margin stops being
-#   !! comparable across the change. Do not re-bake while this is training.
+# It reads a FROZEN copy under baselines/ (currently the rank-288 bake), NOT the live submission.py.
+# Before 2026-09-11 it read submission.py, and re-baking mid-run silently changed both the opponent
+# and the eval baseline - that hazard is gone, and re-baking during a run is now safe.
 #
-# Two useful consequences. Training against a FROZEN strong agent is a far better-conditioned
-# signal than pure self-play against the current policy, which can chase its own reflection - so
-# level2Silver partly de-risks the `self` share. And beating it, then re-baking, is a deliberate
-# iterated-improvement loop: each bake raises the bar for the next run.
+# The upside: training against a frozen strong agent is a far better-conditioned signal than pure
+# self-play against the current policy, which can chase its own reflection - so level2Silver
+# de-risks the `self` share. The cost: the bar no longer rises by itself. Beating this bake then
+# re-baking used to be an automatic iterated-improvement loop; raising it is now a deliberate edit
+# (copy the new bake into baselines/, repoint BakedSubmissionOpponent.DEFAULT_PATH), which is the
+# right trade because an opponent that moves under you makes two runs incomparable.
 #
 # Everything else carries over from ppo_28ch_mixed_selfplay.yaml - see that file's header for the
 # BatchNorm fix, onpolicy sampling, force_disrupt, gamma-per-decision and the 100-turn horizon.
@@ -95,11 +97,9 @@ score_norm: 1000.0                # per-turn margins are divided by this before 
 # --- Evaluation (greedy, fixed seeds - the only cross-run comparable number) ---
 eval_episodes: 100
 eval_max_turns: 100
-eval_bosses: level1,level1Pro,level2,level2Pro,level2ProMax,level2Silver,level2SilverPro
-# level2SilverPro is the FROZEN rank-288 bake under baselines/, so unlike level2Silver its
-# column stays comparable across re-bakes and across runs. Until the next re-bake the two
-# tiers are the same bytes and will print the same row; after one, their difference is
-# exactly what the re-bake changed. Eval only - the training pool above is unchanged.
+eval_bosses: level1,level1Pro,level2,level2Pro,level2ProMax,level2Silver
+# level2Silver now reads a FROZEN bake under baselines/ (the rank-288 one), not the live
+# submission.py, so re-baking no longer moves this column and it is comparable across runs.
 
 # --- Bookkeeping ---
 checkpoint_every: 50              # was 100. Raised in frequency because this project's runs
