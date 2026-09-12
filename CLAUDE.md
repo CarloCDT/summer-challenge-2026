@@ -50,6 +50,12 @@ truth — check it rather than guessing. `verify_rules.py` asserts our port agai
 | `compare_agents.py` | head-to-head round robin, `.pt` or baked `.py`, both seats — **the instrument that separates candidates the boss table cannot** |
 | `diagnose_agent.py` | behavioural read-out: disrupt-vs-skip rate, peak-vs-end connections |
 
+This tree is a **private git repo**: `github.com/CarloCDT/summer-challenge-2026`, branch `main`.
+Tracked: the code, the configs, the notebooks, `submission.py`, `baselines/`, and `runs/` (the
+tensorboard histories every measurement below cites). **Untracked: `checkpoints/`** — 2.0 GB, and
+88 of the 123 are stale 25-channel weights. So the two irreplaceable checkpoints named at the
+bottom of this file exist on this machine only and are not backed up by the repo.
+
 **Legacy but working, not on the live path:** the AlphaZero/MCTS stack (`training/train.py`,
 `mcts.py`, `self_play.py`, `replay_buffer.py`, `model.py`, configs `default/debug/strong/
 mcts_random/connect_towns_topk`) and the lite game (`railroad_lite_env.py`, `training/lite*.py`,
