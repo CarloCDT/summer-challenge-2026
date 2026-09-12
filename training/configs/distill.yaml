@@ -1,0 +1,120 @@
+# Distil a PPO teacher into a submittable student.
+#
+# The teacher is the 64-channel net that PPO trains; it is never submitted, so its size does not
+# matter. The student is what gets baked into submission.py and pasted into CodinGame, so it must
+# fit the 100,000-character source limit.
+#
+# Student architecture: (34, 34, 36) rather than the usual doubling progression. The doubling
+# layout (c, 2c, 4c) concentrates parameters in the bottleneck and dec2, which run on 5x7 and
+# 10x15 grids - 61% of the weights at (64,128,256). The policy output is a per-cell heatmap over
+# the full 20x30 board, so under a hard size cap a flatter progression is a better trade.
+#
+# Sizes below are MEASURED by baking an untrained net of each shape at int4, which is the
+# worst case: random weights are incompressible, so zlib returns them at ~0.98 of raw. Trained
+# weights compress far better (the 64-channel teacher's int4 blob zlibs to 0.750), so a trained
+# student lands well under its worst-case number. Sizing on the worst case is deliberate - the
+# 100k cap is hard, and a run that only fits if the weights happen to compress is a run that
+# can fail after 300 iterations of training.
+#
+#   layout        policy params   int4 worst case   params at full 20x30 resolution
+#   (16,32,64)        115,267            83,153                 15,795
+#   (32,32,32)        121,123            86,995                 54,627
+#   (34,34,36)        138,117            97,697                 61,101   <- this config, 98% of cap
+#   (36,36,40)        156,287           109,093                 67,935   over cap unless it compresses
+#
+# (34,34,36) gets 3.9x the full-resolution capacity of the doubling layout at the same cap, and
+# unlike (36,36,40) it is guaranteed to fit before a single gradient step is taken.
+#
+# Run:  python3 -u -m training.distill --config training/configs/distill.yaml
+# Bake: python3 bake_agent.py checkpoints/<run>-distill_iterN.pt -o submission.py --quant int4
+# Test: python3 test_submission.py submission.py --episodes 20
+
+# Teacher. Pick this from the eval table, never by recency - this project's runs peak narrowly.
+#
+# The 20260911-114307 run (ppo_28ch_vs_silver.yaml) is the current lineage. Its iteration-200
+# checkpoint is ARENA-VALIDATED: distilled, baked and submitted, it moved the CodinGame ranking up
+# substantially. That is the only checkpoint here with evidence from outside our own eval.
+#
+#   checkpoint    level2ProMax        level2Silver (vs the CURRENT bake, 25 games)
+#   iter200        +4164 1.00          +285 0.68     <- arena-validated
+#   iter250        +3645 1.00          +461 0.72
+#   iter300        see below - measure before choosing
+#
+# WARNING when reading that run's in-run eval table: submission.py was re-baked at 15:06, partway
+# through, and level2Silver reads it live. Rows before and after are scored against DIFFERENT
+# opponents - iter200 shows +1667 against the old bake and +285 against the new one. Always
+# re-measure candidates against one fixed opponent (evaluate_checkpoints.py) before comparing.
+teacher_checkpoint: checkpoints/20260911-114307_iter200.pt
+
+# --- Student ---
+channels: [34, 34, 36]
+value_hidden: 128                 # training-only; bake_agent.py drops the critic entirely
+
+quant_aware: int4                 # train the student AS an int4 net: every forward pass uses
+                                  # per-output-channel rounded conv weights, gradients update the
+                                  # full-precision ones (straight-through). Measured motivation:
+                                  # the same student scores 0.570 at full precision and 0.500
+                                  # baked at int4 over 250 head-to-head games - the largest
+                                  # remaining loss in the pipeline now that distillation has
+                                  # caught up with its teacher (0.570 vs 0.600). Costs nothing in
+                                  # submission size. Checkpoints still store full-precision
+                                  # weights; bake_agent.py applies the identical quantization, so
+                                  # what ships is exactly what was trained. Set to null to
+                                  # reproduce the old behaviour.
+
+# --- Data collection ---
+num_iterations: 50
+games_per_iteration: 16
+num_workers: 16
+max_turns: 100
+opponent: level2                  # fallback only; opponent_pool overrides it per game
+
+# THE OPPONENT IS THE SYLLABUS. Distillation only ever teaches the student on states it actually
+# visits, so rolling out against one easy boss produces a student drilled on positions from games
+# won 1.00 by +12,819 - and never shown the inked endgames that decide real matches. The teacher
+# knows what to do there; that knowledge cannot transfer if those positions are absent from the
+# data. This mirrors the mix the agent will actually face.
+#
+# Note this makes distillation depend on submission.py (via level2Silver), exactly as
+# ppo_28ch_vs_silver.yaml does: re-baking mid-run changes the syllabus underneath you.
+opponent_pool:
+  level2ProMax: 0.35              #   the inking endgame - the states that were missing entirely
+  level2Silver: 0.30              #   the currently baked agent, i.e. the bar to clear
+  level2Pro: 0.20                 #   pure builder, keeps the build-out states represented
+  level2: 0.15                    #   the shipped League 2 boss
+
+epsilon: 0.1                      # exploration during roll-out, purely to diversify the states
+                                  # the student is trained on - labels are always the teacher's
+
+dagger_warmup: 30                 # student_rollout_prob ramps 0 -> 1 over this many iterations.
+                                  # Early on the teacher drives (clean, on-policy-for-it states);
+                                  # later the student drives, so it learns to recover from the
+                                  # states its own mistakes lead to rather than only the ones the
+                                  # teacher would ever visit.
+
+# --- Optimisation ---
+epochs_per_iteration: 4
+minibatch_size: 64
+lr: 0.001
+lr_end: 0.00001
+max_grad_norm: 1.0
+
+# --- Evaluation ---
+# argmax agreement with the teacher is the capacity read-out: high agreement means the student
+# can represent the teacher's policy, low agreement means (36,36,40) is too small. The boss table
+# is the ground truth - agreement is a proxy, score is the thing that matters.
+eval_every: 25
+eval_episodes: 100
+eval_bosses: level1,level1Pro,level2,level2Pro,level2ProMax,level2Silver,level2SilverPro
+# The two Silver tiers are the only contested opponents (the PPO teacher wins 1.00 against every
+# other tier), so without them this table cannot tell two students apart. level2Silver moves with
+# whatever is baked, which is the bar a new student has to clear; level2SilverPro is the frozen
+# rank-288 bake under baselines/ and so is the column that stays comparable across runs. They
+# read the same bytes until the next re-bake. Eval only; the pool above is unchanged.
+
+# --- Bookkeeping ---
+checkpoint_every: 25
+checkpoint_dir: checkpoints
+log_dir: null
+device: null
+seed: 0

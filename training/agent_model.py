@@ -1,0 +1,158 @@
+"""RailroadUNet: the dual-head U-Net used by the PPO agents.
+
+    conv in  ->  enc1 ---------------------------- concat -> dec1 -> conv out (policy heatmaps)
+                   |                                  |
+                 pool                             upsample
+                   |                                  |
+                 enc2 ------------- concat -------> dec2
+                   |                  |
+                 pool             upsample
+                   |                  |
+                 bottleneck -----------
+                   |
+                 critic (value)
+
+Two downsampling stages and two upsampling stages, with a plain convolution before the encoder
+and after the decoder. The critic reads the bottleneck - the most compressed view of the board -
+through a small spatial pool, which keeps the value head from dominating the parameter count the
+way a full flatten would.
+
+The value head is unbounded: PPO regresses onto discounted returns, whose scale isn't confined to
+[-1, 1] the way an AlphaZero win-margin target is.
+
+Policy channels differ by game:
+  * lite  - 1 channel:  PLACE
+  * full  - 3 channels: PLACE, DISRUPT, SKIP_DISRUPT (see training/simulator.py)
+"""
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from .encoding import BOARD_HEIGHT, BOARD_WIDTH
+
+
+def _pooled_size(size: int) -> int:
+    return size // 2
+
+
+# Two 2x2 max-pools take (20,30) -> (10,15) -> (5,7). 15 doesn't halve evenly, so the decoder
+# upsamples to explicit target sizes rather than a fixed scale_factor - a naive 2x would turn 7
+# back into 14 and mismatch the (10,15) skip connection.
+STAGE1_HW = (BOARD_HEIGHT, BOARD_WIDTH)                                   # (20, 30)
+STAGE2_HW = (_pooled_size(STAGE1_HW[0]), _pooled_size(STAGE1_HW[1]))      # (10, 15)
+BOTTLENECK_HW = (_pooled_size(STAGE2_HW[0]), _pooled_size(STAGE2_HW[1]))  # (5, 7)
+
+# The critic pools the bottleneck down to this before its MLP.
+VALUE_POOL_HW = (2, 3)
+
+
+class ConvBlock(nn.Module):
+    """Conv2d -> BatchNorm -> ReLU, twice."""
+
+    def __init__(self, in_channels: int, out_channels: int):
+        super().__init__()
+        self.block = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x):
+        return self.block(x)
+
+
+class RailroadUNet(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        policy_channels: int,
+        base_channels: int = 32,
+        value_hidden: int = 128,
+        dropout: float = 0.1,
+        channels=None,
+    ):
+        """`channels` gives the three stage widths explicitly as (c1, c2, c3); leave it None for
+        the classic doubling progression (c, 2c, 4c) derived from `base_channels`.
+
+        Why the override exists: doubling concentrates the weights in the coarsest stages, which
+        run on 5x7 and 10x15 grids - at (64,128,256) the bottleneck and dec2 hold 61% of the
+        parameters. The policy output is a per-cell heatmap over the full 20x30 board, so under a
+        hard size budget (CodinGame caps source at 100k chars) a flatter progression buys far more
+        capacity where the decision is actually made: (34,34,36) and (16,32,64) both bake under
+        that cap at int4, but the flat one has 3.9x more parameters running at full resolution.
+        See training/configs/distill.yaml for the measured size table."""
+        super().__init__()
+        if channels is not None:
+            c1, c2, c3 = (int(c) for c in channels)
+        else:
+            c1, c2, c3 = base_channels, base_channels * 2, base_channels * 4
+
+        # --- convolution before ---
+        self.stem = nn.Sequential(
+            nn.Conv2d(in_channels, c1, kernel_size=3, padding=1),
+            nn.BatchNorm2d(c1),
+            nn.ReLU(inplace=True),
+        )
+
+        # --- 2 down ---
+        self.enc1 = ConvBlock(c1, c1)
+        self.enc2 = ConvBlock(c1, c2)
+        self.pool = nn.MaxPool2d(2)
+        self.bottleneck = ConvBlock(c2, c3)
+
+        # --- critic, off the bottleneck ---
+        self.value_head = nn.Sequential(
+            nn.AdaptiveAvgPool2d(VALUE_POOL_HW),
+            nn.Flatten(),
+            nn.Linear(c3 * VALUE_POOL_HW[0] * VALUE_POOL_HW[1], value_hidden),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout),
+            nn.Linear(value_hidden, 1),
+        )
+
+        # --- 2 up, with skip connections ---
+        # A 1x1 conv trims the upsampled tensor's channels to match its skip connection before
+        # concatenation, so the following ConvBlock's input size doesn't depend on base_channels.
+        self.up2_reduce = nn.Conv2d(c3, c2, kernel_size=1)
+        self.dec2 = ConvBlock(c2 * 2, c2)
+        self.up1_reduce = nn.Conv2d(c2, c1, kernel_size=1)
+        self.dec1 = ConvBlock(c1 * 2, c1)
+
+        # --- convolution after ---
+        self.head = nn.Conv2d(c1, policy_channels, kernel_size=3, padding=1)
+
+    def forward(self, x: torch.Tensor, action_mask: torch.Tensor = None):
+        """
+        x: (B, in_channels, BOARD_HEIGHT, BOARD_WIDTH)
+        action_mask: optional (B, policy_channels, BOARD_HEIGHT, BOARD_WIDTH), 1.0 = legal.
+            Illegal cells get their pre-softmax logit driven to the dtype's minimum; the caller
+            owns the softmax, this only ever returns raw (masked) logits.
+        Returns: (policy_logits (B, policy_channels, H, W), value (B, 1))
+        """
+        stem = self.stem(x)
+        skip1 = self.enc1(stem)                          # (B, c1, 20, 30)
+        skip2 = self.enc2(self.pool(skip1))              # (B, c2, 10, 15)
+        bottleneck = self.bottleneck(self.pool(skip2))   # (B, c3, 5, 7)
+
+        value = self.value_head(bottleneck)              # (B, 1), unbounded
+
+        up2 = F.interpolate(bottleneck, size=STAGE2_HW, mode="bilinear", align_corners=False)
+        dec2 = self.dec2(torch.cat([self.up2_reduce(up2), skip2], dim=1))
+
+        up1 = F.interpolate(dec2, size=STAGE1_HW, mode="bilinear", align_corners=False)
+        dec1 = self.dec1(torch.cat([self.up1_reduce(up1), skip1], dim=1))
+
+        policy_logits = self.head(dec1)
+
+        if action_mask is not None:
+            # finfo.min rather than a literal -1e9: under autocast this tensor can be float16,
+            # whose max magnitude (~65504) -1e9 would overflow. Either way the exponential
+            # underflows to exactly 0.0, so masked cells contribute nothing to the softmax.
+            policy_logits = policy_logits.masked_fill(
+                action_mask == 0, torch.finfo(policy_logits.dtype).min
+            )
+
+        return policy_logits, value

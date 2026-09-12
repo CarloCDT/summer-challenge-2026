@@ -1,0 +1,29 @@
+# Model weights. `checkpoints/` is 2.0 GB of .pt files, far past what GitHub will take, and
+# CLAUDE.md records that 88 of the 123 are stale 25-channel files that no longer even load
+# against the current environment. They stay on the training machine.
+#
+# NOT TRACKED AND NOT REPLACEABLE - back these up by hand:
+#   checkpoints/20260910-224257_iter200.pt   the original +2367-on-level2ProMax peak
+#   checkpoints/20260911-114307_iter200.pt   the teacher behind the rank-288 submission
+#
+# What IS tracked is everything needed to rebuild an agent from one: the configs, the training
+# code, `submission.py`, and the frozen bakes under `baselines/`.
+checkpoints/
+
+# Byte-compiled
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Notebook scratch state (the notebooks themselves are tracked, outputs and all)
+.ipynb_checkpoints/
+
+# Per-machine Claude Code state: a permission allowlist and a task lock, useful to nobody else.
+.claude/settings.local.json
+.claude/*.lock
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+*.swp

@@ -1,0 +1,28 @@
+# Fast PPO pipeline check: the map size is pinned to the smallest the generator can produce
+# (21x14) and the opponent is passive, so iterations are quick. Same rules as ppo.yaml otherwise.
+#
+# Run: python3 -m training.train_ppo --config training/configs/ppo_simple.yaml
+
+grid_height: 14
+max_turns: 50
+opponent_strategy: passive
+num_iterations: 200
+games_per_iteration: 4
+gamma: 0.99
+gae_lambda: 0.95
+epsilon_start: 0.5
+epsilon_end: 0.05
+clip_epsilon: 0.2
+ppo_epochs: 4
+minibatch_size: 128
+value_coef: 0.5
+entropy_coef: 0.01
+max_grad_norm: 0.5
+lr: 0.0003
+checkpoint_every: 50
+checkpoint_dir: checkpoints
+log_dir: null
+device: null
+seed: null
+num_workers: 4
+init_checkpoint: null

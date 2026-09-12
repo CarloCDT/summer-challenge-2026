@@ -1,0 +1,69 @@
+# PPO fine-tune of the distilled student, on the full game against level2.
+#
+# Why this exists: distillation caps the student at the teacher's policy - the KL objective can
+# only ever ask it to imitate. PPO reads the actual score, so it can move the student past the
+# teacher on the metric that decides promotion. The distilled weights are the initialisation,
+# which is the whole point: a cold (34,34,36) net trained by PPO from scratch gets one scalar
+# reward per turn and would take far longer to reach the same place, if it got there at all.
+#
+# NOTE ON SHAPE: channels and value_hidden must match the distilled checkpoint EXACTLY, or the
+# warm start throws a shape mismatch on load_state_dict (strict=False does not rescue this - it
+# forgives missing keys, not wrong shapes). The student is (34,34,36) with value_hidden 128,
+# while every other PPO config here is the (64,128,256) default with value_hidden 256.
+#
+# The point of the fine-tune is a better score at a size that still fits, so re-bake and re-check
+# the character count after it, exactly as after distillation:
+#   python3 bake_agent.py checkpoints/<run>_iterN.pt -o submission.py --quant int4 --verify 20
+# The shape does not change, so the worst case stays 97,697 chars, but confirm rather than assume.
+
+# --- Environment ---
+grid_height: null
+max_turns: 100
+opponent_strategy: level2
+allow_skip_disrupt: true
+reward_mode: margin
+
+# --- Network: MUST match the distilled student ---
+channels: [34, 34, 36]
+value_hidden: 128
+
+# --- Warm start ---
+# Set this to the best distilled checkpoint by the boss table logged during distillation, not to
+# the last one - distillation oscillates between checkpoints the same way the PPO runs do.
+init_checkpoint: checkpoints/REPLACE_ME-distill_iterN.pt
+
+# --- PPO ---
+# lr is an order of magnitude below a cold start's. The initialisation is already good; the risk
+# here is destroying it in the first few hundred updates, not converging too slowly. epsilon
+# starts low for the same reason - the distilled policy already builds sensible corridors.
+num_iterations: 4000
+games_per_iteration: 32
+num_workers: 32
+gamma: 0.99
+gae_lambda: 0.95
+epsilon_start: 0.15
+epsilon_end: 0.02
+clip_epsilon: 0.2
+ppo_epochs: 2
+minibatch_size: 256
+value_coef: 0.5
+entropy_coef: 0.001
+max_grad_norm: 0.5
+lr: 0.00003
+lr_end: 0.0
+score_norm: 1000.0
+
+# --- Evaluation ---
+# The critic is the one part of the student that distillation never trained - distill.py's loss is
+# pure policy KL, so value_head is still at its random initialisation and value_loss will start
+# high and fall. That is expected; judge the run by the boss table, not by value_loss.
+eval_episodes: 100
+eval_max_turns: 100
+eval_bosses: level1,level1Pro,level2,level2Pro,level2ProMax
+
+# --- Bookkeeping ---
+checkpoint_every: 100
+checkpoint_dir: checkpoints
+log_dir: null
+device: null
+seed: null

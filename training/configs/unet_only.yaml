@@ -1,0 +1,23 @@
+# Search-free baseline against a passive opponent - isolates the network's own learning signal.
+# See no_mcts.yaml for why this signal is weak; prefer train_ppo.py for real runs.
+#
+# Run: python3 -m training.train --config training/configs/unet_only.yaml
+
+grid_height: null
+max_turns: 100
+opponent_strategy: passive
+num_simulations: 20
+eval_batch_size: 16
+c_puct: 1.5
+temperature_moves: 30
+games_per_iteration: 1
+num_iterations: 1000
+train_steps_per_iteration: 20
+batch_size: 128
+buffer_capacity: 100000
+lr: 0.001
+checkpoint_every: 20
+checkpoint_dir: checkpoints
+log_dir: null
+device: null
+seed: null

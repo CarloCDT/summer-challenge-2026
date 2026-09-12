@@ -1,0 +1,139 @@
+ 	Goal
+Score more points than your opponent by drawing railway lines between towns while sabotaging your opponent's efforts.
+
+ 	Rules
+In this game both players use paint to draw train tracks on a magic map, connecting towns on the map will bring prosperity to your own world.
+
+The map is represented in the game by a grid.
+
+🗺️ Map
+The grid is made up of cells that can have one of three types:
+
+Type 0 for plains.
+Type 1 for river.
+Type 2 for mountains.
+The grid is partitioned into regions. Each region is made up of multiple contiguous cells. Each region has a unique regionId. Regions are susceptible to disruption by players.
+
+More information on disruption lower down.
+
+Some regions will contain a town. Towns can only be found on plain cells.
+
+🏯 Towns
+Each game starts with multiple towns placed randomly across the map. There will only be one per region and no two regions sharing a border will both contain a town.
+
+Each town has a unique townId.
+
+Each town will have a list of desiredConnections: a list of town ids representing all the other towns this town would like to be connected to via train tracks placed by players.
+
+Providing a town with train tracks connecting it to a desired town is how players score points.
+
+Desired connections are unilateral. Meaning if town 0 spawns with a desired connection to town 1 , town 1 will not want to connect to town 0 .
+
+A town can have zero desiredConnections, but will always be the subject of at least one other town's desiredConnections.
+
+🛤️ Placing Train Tracks
+Players are given on each turn 3 paint points they can use to place train tracks on the map. ⚠️ These points do not carry over to the next turn and will be lost if left unused.
+
+It costs:
+
+1 paint point to place a track on plains.
+2 paint points to place a track on river.
+3 paint points to place a track on mountains.
+A track's owner is the playerId ( 0 - 1 ) of the player that placed it. They will be the same color.
+
+If both players place a track on the same turn at the same location, the track's owner will be 2 , indicating a neutral track piece.
+
+A train track cannot be placed on a town or on an existing track.
+
+Once placed, a train track will automatically connect to other tracks and towns orthogonally adjacent to it.
+
+🏯🛤️🏯 Connections
+For each pair of towns in which one has the other in its desiredConnections, if at least one path between the two exists, the shortest such path becomes the active connection between those towns.
+
+A path is an uninterrupted sequence of orthogonally adjacent cells with a train track or a town.
+
+If there are multiple shortest paths, the chosen path will always prioritize the direction in the following order when moving from the requesting town to the desired connected town:
+
+NORTH
+EAST
+SOUTH
+WEST
+At the end of every turn, each active connection will provide 1 point to each player for every track they own in the path.
+
+
+💥 Disruption
+Simarly to paint points, players can also use 1 disruption point per turn. It can be used to tamper with the map, giving you an edge over your opponent. These points aren't retained in between turns either.
+
+Players may spend their disruption point each turn to increase the instability of any region by 1 .
+
+Once a region's instability reaches 4 , that region is inked out, washing any placed train tracks away, and rendering any future placements on it impossible. Any active connections via this region will be severed.
+
+It is not possible to disrupt a region that is already inked out.
+
+🎬 Actions
+Each turn, players must provide at least one action on the standard output.
+
+Actions must be separated by a semicolon ; and be one of the following:
+
+PLACE_TRACKS x y : place a track on a free cell.
+AUTOPLACE fromX fromY toX toY : automatically generates a list of actions for the cheapest path from from to to in terms of paint points. This will do nothing if a path already exists.
+The generated actions replace this command.
+DISRUPT regionId : increase the instability of a region. Note: DISRUPT x y also works, to target the region (x,y) is part of.
+WAIT : do nothing.
+
+Victory Conditions
+Have the most points after 100 turns.
+Be in the lead if all desired connections become impossible to fulfill.
+Defeat Conditions
+Your program does not provide a command in the alloted time or one of the commands is invalid.
+
+ 	Technical Details
+All PLACE_TRACKS actions, including from AUTOPLACE are performed before DISRUPT actions. Points are scored at the very end of a turn, after inking out unstable regions.
+Commands that are impossible actions are skipped. If an impossible action is part of an AUTOPLACE , the rest of the generated actions are skipped even if they are possible.
+
+Click to expand
+ 	Game Protocol
+Initialization Input
+myId: your player id. 0 or 1 .
+width: number of cells in a row of the map.
+height: number of cells in a column of the map.
+Next height*width lines: two integers to describe each cell of the map, from left to right, top to bottom:
+regionId: the id of the region this cell is a part of.
+type: the terrain type of this cell ( 0-2 )
+townCount: number of towns on the map.
+Next townCount lines:
+townId: unique identifier of this town.
+townX: X position of this town ( 0 is left-most).
+townY: Y position of this town ( 0 is top-most).
+desiredConnections:
+A string of comma-separated townIds. e.g. " 1,2,4 "
+" x " if this town has no desired connections.
+Input for one game turn
+myScore: your points.
+foeScore: your opponent's points.
+Next height*width lines: state of each cell, in the same order they were given before:
+trackOwner:
+-1 if this cell has no track.
+0 if player 0 owns a track on this cell.
+1 if player 1 owns a track on this cell.
+2 if there is a neutral track on this cell.
+instability: the instability of the region this cell is a part of.
+inked: 1 if the region has been inked out (instability ≥ 4 ), 0 otherwise.
+partOfActiveConnections:
+A string of comma-separated townId pairs indicating this cell is part of an active connection between those two towns.
+e.g. " 1-2,1-3,4-7 ": cell is part of the shortest path between towns 1 & 2, towns 1 & 3, and towns 4 & 7.
+" x " if this cell is not part of any active connection.
+Output
+A single line containing at least one action and at most a single AUTOPLACE action.
+All actions must be separated with a semicolon ; and be one of the following:
+PLACE_TRACKS followed by the coordinates of the desired location.
+AUTOPLACE followed by two pairs of coordinates, to create the cheapest path between the two.
+DISRUPT followed by the regionId of the region you wish to disrupt. Note: replace regionId by x,y coordinates target the region at that location.
+MESSAGE followed by text, to be displayed in the viewer.
+WAIT
+Constraints
+Response time per turn ≤ 50 ms
+Response time for the first turn ≤ 1000 ms
+21 ≤ width ≤ 30
+14 ≤ height ≤ 20
+4 ≤ townCount ≤ 12

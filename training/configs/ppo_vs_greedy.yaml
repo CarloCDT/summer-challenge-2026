@@ -1,0 +1,63 @@
+# PPO on the full game against the greedy-AUTOPLACE opponent, with a margin-based reward.
+#
+# A big step up in difficulty from ppo_full.yaml's half-idle random opponent. This one prices
+# every unfinished desired connection with the same cheapest-path search AUTOPLACE uses and
+# commits to the cheapest, so it actually finishes routes instead of scattering them - measured
+# at ~4900 points per 30-turn game versus ~3700 for the shipped League 2 Boss.
+#
+# Warm-started from the run against the weak opponent; that agent knows how to build corridors,
+# it now has to learn to do it faster than someone else who can.
+#
+# Run: python3 -m training.train_ppo --config training/configs/ppo_vs_greedy.yaml
+
+# --- Environment ---
+grid_height: null                 # null = the authentic random size (h 14..20, w = round(h*1.5))
+max_turns: 100                    # Game.MAX_TURNS - the real game length
+opponent_strategy: greedy_autoplace
+allow_skip_disrupt: true          # the agent may decline to disrupt
+
+reward_mode: margin               # own score gain minus the opponent's, per turn (was "own").
+                                  # Both players score on the SAME shared connection, so this
+                                  # also discourages completing a route whose path is mostly the
+                                  # opponent's track - that pays them more than it pays you.
+
+# --- Network (RailroadUNet: 2 down / 2 up, conv before and after, critic off the bottleneck) ---
+base_channels: 64
+value_hidden: 256
+
+# --- PPO (same tuning that stabilised ppo_full.yaml: approx_kl 0.19 -> ~0.06) ---
+num_iterations: 10000
+games_per_iteration: 16
+num_workers: 16
+gamma: 0.99
+gae_lambda: 0.95
+epsilon_start: 0.3                # lower than a cold start's 0.5 - the warm-started policy
+epsilon_end: 0.05                 # already builds sensible corridors, so less random disruption
+                                  # of them is needed to keep exploring.
+clip_epsilon: 0.2
+ppo_epochs: 2
+minibatch_size: 256
+value_coef: 0.5
+entropy_coef: 0.001
+max_grad_norm: 0.5
+lr: 0.0001
+lr_end: 0.0                       # annealed linearly to ~0 over the run
+score_norm: 1000.0                # per-turn margins are divided by this before GAE
+
+# --- Evaluation (runs right after each checkpoint save, printed to the terminal and logged to
+# TensorBoard as eval/<boss>/*). Greedy, on a fixed set of maps, so successive tables differ
+# because the agent changed rather than because the maps did. ~60-90s at 100 episodes, i.e.
+# roughly 15-25% overhead at checkpoint_every: 100 - lower it or raise checkpoint_every to trade
+# precision for speed. Set eval_episodes: 0 to switch it off.
+eval_episodes: 100
+eval_max_turns: 100
+eval_bosses: level1,level1Pro,level2,level2Pro,level2ProMax
+
+# --- Bookkeeping ---
+checkpoint_every: 100
+checkpoint_dir: checkpoints
+init_checkpoint: checkpoints/20260910-072235_iter800.pt   # weights only, fresh optimizer state;
+                                  # this run's iteration numbers restart at 0.
+log_dir: null
+device: null
+seed: null

@@ -1,0 +1,114 @@
+# PPO continuing from runs/20260911-082014, with level2Silver - the currently baked
+# submission.py - added to the opponent pool as the hardest tier.
+#
+# Warm start: checkpoints/20260911-082014_iter200.pt. That run beat the previous best teacher
+# (224257_iter200) on all five bosses by its OWN iteration 100:
+#
+#     boss            teacher    082014_iter100
+#     level1          +15994          +23335  win 1.00
+#     level1Pro       +13380          +17592  win 1.00
+#     level2          +13581          +18468  win 1.00
+#     level2Pro       +11945          +16128  win 1.00
+#     level2ProMax     +2367           +3546  win 0.98
+#
+# WHY THE POOL IS WEIGHTED THIS WAY. At iter100 the agent wins 1.00 against level1, level1Pro,
+# level2, level2Pro AND level2ProMax - those tiers are solved and mostly contribute gradient for
+# a game already won. The one genuinely contested opponent is level2Silver (+1378, win 0.70), so
+# it gets the largest share. The easy tiers are kept at low weight rather than dropped: training
+# 600 iterations against level2ProMax alone previously halved the margin on every other boss.
+# Tune these freely - they are a starting point, not a measurement.
+#
+# WHAT level2Silver IS: submission.py itself, driven as a subprocess over the referee's wire
+# protocol. Not the checkpoint behind it - the int4 bake reproduces only ~62% of its own torch
+# model's argmax moves, so the checkpoint is a different player with the same score. Verified
+# exact: identical scores playing seat 0 via test_submission.py and seat 1 as this boss across
+# 5 seeds. Costs ~1.0s per 100-turn game, on par with level2Pro.
+#
+#   !! level2Silver TRACKS WHATEVER IS CURRENTLY BAKED. Re-baking submission.py mid-run silently
+#   !! changes both the opponent AND the eval baseline, and eval/level2Silver/margin stops being
+#   !! comparable across the change. Do not re-bake while this is training.
+#
+# Two useful consequences. Training against a FROZEN strong agent is a far better-conditioned
+# signal than pure self-play against the current policy, which can chase its own reflection - so
+# level2Silver partly de-risks the `self` share. And beating it, then re-baking, is a deliberate
+# iterated-improvement loop: each bake raises the bar for the next run.
+#
+# Everything else carries over from ppo_28ch_mixed_selfplay.yaml - see that file's header for the
+# BatchNorm fix, onpolicy sampling, force_disrupt, gamma-per-decision and the 100-turn horizon.
+#
+# Run: python3 -u -m training.train_ppo --config training/configs/ppo_28ch_vs_silver.yaml
+
+# --- Environment ---
+grid_height: null                 # null = the authentic random size (h 14..20, w = round(h*1.5))
+max_turns: 100                    # the PRODUCTION horizon - training and eval agree
+opponent_strategy: level2Silver   # fallback only; opponent_pool overrides this per game
+allow_skip_disrupt: true          # keeps the 3-channel head so the warm start loads
+force_disrupt: true               # ...but never offers SKIP_DISRUPT. Now recorded in the
+                                  # checkpoint, so evaluate.py and bake_agent.py follow suit
+                                  # automatically instead of scoring a frozen channel.
+
+opponent_pool:                    # weights, normalised internally; sampled once per game
+  level2Silver: 0.50              #   the only opponent still contested (win 0.70)
+  level2ProMax: 0.20              #   the inking tier - won 1.00, but keep it sharp
+  self: 0.20                      #   self-play against the current weights
+  level2Pro: 0.10                 #   pure builder, guards against forgetting how to build                  #   shipped League 2 boss, cheap insurance
+self_play_epsilon: 1.0            # opponent samples like the agent - a fair mirror. Keep this
+                                  # equal to the agent's own action selection.
+
+reward_mode: margin               # own score gain minus the opponent's, per turn. Both players
+                                  # score on the SAME shared connection, so this also discourages
+                                  # completing a route whose path is mostly the opponent's track.
+
+# --- Network (RailroadUNet: 2 down / 2 up, conv before and after, critic off the bottleneck) ---
+base_channels: 64
+value_hidden: 256
+
+# --- PPO ---
+num_iterations: 300               # the previous run's self-play margin plateaued around
+                                  # iteration 90 and lr anneals over the FULL count, so setting
+                                  # this to what you actually intend to run matters - stopping a
+                                  # 400-iteration schedule at 200 leaves lr at half its floor.
+games_per_iteration: 64
+num_workers: 32
+gamma: 0.997                      # per DECISION (~2.96/turn, measured) => ~0.991 per turn
+gae_lambda: 0.95                  # NOTE: the real-reward horizon is 1/(1-gamma*lambda) ~ 19
+                                  # decisions (~6 turns), NOT 1/(1-gamma). Everything past that
+                                  # is the critic's job, and train/explained_variance (new) is
+                                  # what tells you whether it is doing it. Raising this to 0.98
+                                  # would roughly triple the horizon at the cost of variance -
+                                  # the top candidate experiment, deliberately NOT bundled here
+                                  # so the pool change can be attributed on its own.
+action_selection: onpolicy        # behaviour policy == policy, so the PPO ratio is unbiased
+clip_epsilon: 0.2
+ppo_epochs: 2
+minibatch_size: 256
+value_coef: 0.5
+entropy_coef: 0.001               # exploration comes from sampling itself. Entropy fell 4.19 ->
+                                  # 2.85 over the last run and was still falling; if it drops
+                                  # below ~2 the policy is going deterministic and this is the
+                                  # knob to raise.
+max_grad_norm: 0.5
+lr: 0.0001
+lr_end: 0.0                       # annealed linearly to ~0 over num_iterations
+score_norm: 1000.0                # per-turn margins are divided by this before GAE
+
+# --- Evaluation (greedy, fixed seeds - the only cross-run comparable number) ---
+eval_episodes: 100
+eval_max_turns: 100
+eval_bosses: level1,level1Pro,level2,level2Pro,level2ProMax,level2Silver,level2SilverPro
+# level2SilverPro is the FROZEN rank-288 bake under baselines/, so unlike level2Silver its
+# column stays comparable across re-bakes and across runs. Until the next re-bake the two
+# tiers are the same bytes and will print the same row; after one, their difference is
+# exactly what the re-bake changed. Eval only - the training pool above is unchanged.
+
+# --- Bookkeeping ---
+checkpoint_every: 50              # was 100. Raised in frequency because this project's runs
+                                  # peak narrowly - the previous best was iteration 200 of 1000,
+                                  # gone by 300 - and because you should not have to stop a run
+                                  # by hand to capture a checkpoint at the iteration you want.
+                                  # 6 checkpoints over the run; each triggers an eval table.
+checkpoint_dir: checkpoints
+init_checkpoint: checkpoints/20260911-082014_iter200.pt
+log_dir: null
+device: null
+seed: null

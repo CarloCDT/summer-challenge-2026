@@ -1,0 +1,550 @@
+Training on device: cuda
+TensorBoard logs: runs/20260910-085827
+Initialized weights from checkpoints/20260910-072235_iter800.pt (trained for 800 iterations)
+RailroadUNet: 2,187,652 parameters
+Process SpawnPoolWorker-4:
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 131, in worker
+    put((job, i, result))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 136, in worker
+    put((job, i, (False, wrapped)))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+Process SpawnPoolWorker-7:
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 131, in worker
+    put((job, i, result))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 136, in worker
+    put((job, i, (False, wrapped)))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+Process SpawnPoolWorker-14:
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 131, in worker
+    put((job, i, result))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 136, in worker
+    put((job, i, (False, wrapped)))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+Process SpawnPoolWorker-11:
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 131, in worker
+    put((job, i, result))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 136, in worker
+    put((job, i, (False, wrapped)))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+Process SpawnPoolWorker-1:
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 131, in worker
+    put((job, i, result))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 136, in worker
+    put((job, i, (False, wrapped)))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+Process SpawnPoolWorker-12:
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 131, in worker
+    put((job, i, result))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 136, in worker
+    put((job, i, (False, wrapped)))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+Process SpawnPoolWorker-2:
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 131, in worker
+    put((job, i, result))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 136, in worker
+    put((job, i, (False, wrapped)))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+Process SpawnPoolWorker-15:
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 131, in worker
+    put((job, i, result))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 136, in worker
+    put((job, i, (False, wrapped)))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+Process SpawnPoolWorker-5:
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 131, in worker
+    put((job, i, result))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 136, in worker
+    put((job, i, (False, wrapped)))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+Process SpawnPoolWorker-16:
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 131, in worker
+    put((job, i, result))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 136, in worker
+    put((job, i, (False, wrapped)))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+Process SpawnPoolWorker-13:
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 131, in worker
+    put((job, i, result))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 136, in worker
+    put((job, i, (False, wrapped)))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+Process SpawnPoolWorker-10:
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 131, in worker
+    put((job, i, result))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 136, in worker
+    put((job, i, (False, wrapped)))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+Process SpawnPoolWorker-3:
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 131, in worker
+    put((job, i, result))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 136, in worker
+    put((job, i, (False, wrapped)))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+Process SpawnPoolWorker-9:
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 131, in worker
+    put((job, i, result))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 136, in worker
+    put((job, i, (False, wrapped)))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+Process SpawnPoolWorker-8:
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 131, in worker
+    put((job, i, result))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 136, in worker
+    put((job, i, (False, wrapped)))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+Process SpawnPoolWorker-6:
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 131, in worker
+    put((job, i, result))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/pool.py", line 136, in worker
+    put((job, i, (False, wrapped)))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/queues.py", line 377, in put
+    self._writer.send_bytes(obj)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 420, in _send_bytes
+    self._send(header)
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+/home/linuxbrew/.linuxbrew/opt/python@3.11/lib/python3.11/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 6 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '

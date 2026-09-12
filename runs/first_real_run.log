@@ -1,0 +1,59 @@
+/usr/lib/python3.10/runpy.py:126: RuntimeWarning: 'training.train' found in sys.modules after import of package 'training', but prior to execution of 'training.train'; this may result in unpredictable behaviour
+  warn(RuntimeWarning(msg))
+Training on device: cuda
+TensorBoard logs: runs/first_real_run
+[iter 0] score_margin=42.0 loss=3.4276 (policy=2.8223, value=0.6053) self_play=54.9s train=0.7s buffer=303
+[iter 1] score_margin=0.0 loss=2.6188 (policy=1.8035, value=0.8153) self_play=63.7s train=0.3s buffer=608
+[iter 2] score_margin=134.0 loss=2.0165 (policy=1.4379, value=0.5786) self_play=64.9s train=0.2s buffer=914
+[iter 3] score_margin=31.0 loss=1.9040 (policy=1.2958, value=0.6083) self_play=56.3s train=0.2s buffer=1228
+[iter 4] score_margin=155.0 loss=1.6158 (policy=1.1046, value=0.5112) self_play=66.6s train=0.3s buffer=1539
+[iter 5] score_margin=0.0 loss=1.7154 (policy=1.1397, value=0.5757) self_play=64.6s train=0.3s buffer=1839
+[iter 6] score_margin=12.0 loss=1.6515 (policy=1.0244, value=0.6271) self_play=56.0s train=0.3s buffer=2160
+[iter 7] score_margin=0.0 loss=1.6628 (policy=0.9936, value=0.6693) self_play=60.7s train=0.3s buffer=2465
+[iter 8] score_margin=15.0 loss=1.5355 (policy=0.8401, value=0.6953) self_play=69.4s train=0.3s buffer=2774
+[iter 9] score_margin=72.0 loss=1.6292 (policy=0.9689, value=0.6603) self_play=75.6s train=0.2s buffer=3074
+[iter 9] checkpoint saved: checkpoints/20260908-213557_iter10.pt
+[iter 10] score_margin=272.0 loss=1.5637 (policy=0.9604, value=0.6034) self_play=59.7s train=0.2s buffer=3376
+[iter 11] score_margin=616.0 loss=1.4870 (policy=0.9409, value=0.5460) self_play=73.2s train=0.3s buffer=3686
+[iter 12] score_margin=0.0 loss=1.4703 (policy=0.8782, value=0.5921) self_play=67.6s train=0.3s buffer=3991
+[iter 13] score_margin=241.0 loss=1.4042 (policy=0.8685, value=0.5358) self_play=68.0s train=0.3s buffer=4298
+[iter 14] score_margin=32.0 loss=1.4057 (policy=0.8553, value=0.5505) self_play=72.4s train=0.3s buffer=4607
+[iter 15] score_margin=66.0 loss=1.3254 (policy=0.7922, value=0.5332) self_play=66.2s train=0.2s buffer=4913
+[iter 16] score_margin=0.0 loss=1.3399 (policy=0.7670, value=0.5729) self_play=65.6s train=0.3s buffer=5225
+[iter 17] score_margin=0.0 loss=1.4318 (policy=0.8342, value=0.5976) self_play=69.0s train=0.3s buffer=5526
+[iter 18] score_margin=36.0 loss=1.4337 (policy=0.8272, value=0.6065) self_play=68.0s train=0.3s buffer=5834
+[iter 19] score_margin=245.0 loss=1.4081 (policy=0.8230, value=0.5852) self_play=71.2s train=0.2s buffer=6121
+[iter 19] checkpoint saved: checkpoints/20260908-213557_iter20.pt
+[iter 20] score_margin=0.0 loss=1.3944 (policy=0.7981, value=0.5963) self_play=61.0s train=0.3s buffer=6423
+[iter 21] score_margin=482.0 loss=1.3885 (policy=0.8074, value=0.5811) self_play=81.3s train=0.3s buffer=6726
+[iter 22] score_margin=131.0 loss=1.3301 (policy=0.7752, value=0.5548) self_play=76.9s train=0.3s buffer=7040
+[iter 23] score_margin=0.0 loss=1.3369 (policy=0.7618, value=0.5751) self_play=61.4s train=0.3s buffer=7342
+[iter 24] score_margin=0.0 loss=1.3867 (policy=0.7901, value=0.5966) self_play=66.5s train=0.2s buffer=7641
+[iter 25] score_margin=0.0 loss=1.3798 (policy=0.7836, value=0.5961) self_play=61.8s train=0.2s buffer=7948
+[iter 26] score_margin=-144.0 loss=1.4501 (policy=0.7628, value=0.6873) self_play=72.2s train=0.2s buffer=8257
+[iter 27] score_margin=0.0 loss=1.4740 (policy=0.7488, value=0.7252) self_play=62.9s train=0.3s buffer=8563
+[iter 28] score_margin=0.0 loss=1.4282 (policy=0.7290, value=0.6992) self_play=65.4s train=0.3s buffer=8876
+[iter 29] score_margin=6.0 loss=1.4267 (policy=0.7141, value=0.7126) self_play=66.5s train=0.3s buffer=9183
+[iter 29] checkpoint saved: checkpoints/20260908-213557_iter30.pt
+[iter 30] score_margin=0.0 loss=1.5017 (policy=0.7673, value=0.7344) self_play=63.6s train=0.3s buffer=9484
+[iter 31] score_margin=20.0 loss=1.4664 (policy=0.7353, value=0.7311) self_play=63.4s train=0.3s buffer=9788
+[iter 32] score_margin=2.0 loss=1.4621 (policy=0.7380, value=0.7241) self_play=66.4s train=0.2s buffer=10093
+[iter 33] score_margin=85.0 loss=1.5052 (policy=0.7717, value=0.7335) self_play=60.3s train=0.3s buffer=10396
+[iter 34] score_margin=264.0 loss=1.4610 (policy=0.7438, value=0.7172) self_play=65.4s train=0.3s buffer=10702
+[iter 35] score_margin=416.0 loss=1.4566 (policy=0.7584, value=0.6982) self_play=80.2s train=0.3s buffer=11008
+[iter 36] score_margin=0.0 loss=1.3779 (policy=0.7012, value=0.6766) self_play=69.8s train=0.3s buffer=11312
+[iter 37] score_margin=24.0 loss=1.3985 (policy=0.6964, value=0.7021) self_play=71.6s train=0.3s buffer=11622
+[iter 38] score_margin=0.0 loss=1.3726 (policy=0.6798, value=0.6929) self_play=72.8s train=0.3s buffer=11927
+[iter 39] score_margin=-7.0 loss=1.3997 (policy=0.6791, value=0.7206) self_play=66.2s train=0.3s buffer=12236
+[iter 39] checkpoint saved: checkpoints/20260908-213557_iter40.pt
+[iter 40] score_margin=0.0 loss=1.4229 (policy=0.7144, value=0.7085) self_play=70.7s train=0.3s buffer=12536
+[iter 41] score_margin=7.0 loss=1.4060 (policy=0.6868, value=0.7192) self_play=74.0s train=0.3s buffer=12842
+[iter 42] score_margin=84.0 loss=1.4225 (policy=0.7176, value=0.7049) self_play=69.6s train=0.3s buffer=13153
+[iter 43] score_margin=0.0 loss=1.4435 (policy=0.7135, value=0.7300) self_play=68.8s train=0.3s buffer=13465
+[iter 44] score_margin=0.0 loss=1.5075 (policy=0.7733, value=0.7342) self_play=70.0s train=0.3s buffer=13758
+[iter 45] score_margin=0.0 loss=1.4517 (policy=0.7229, value=0.7288) self_play=61.9s train=0.3s buffer=14068
+[iter 46] score_margin=36.0 loss=1.3906 (policy=0.6709, value=0.7197) self_play=65.0s train=0.3s buffer=14378
+[iter 47] score_margin=198.0 loss=1.4374 (policy=0.7192, value=0.7182) self_play=76.8s train=0.3s buffer=14695
+[iter 48] score_margin=12.0 loss=1.4548 (policy=0.7325, value=0.7223) self_play=63.8s train=0.3s buffer=15000
+[iter 49] score_margin=7.0 loss=1.3883 (policy=0.6901, value=0.6982) self_play=59.4s train=0.2s buffer=15301
+[iter 49] checkpoint saved: checkpoints/20260908-213557_iter50.pt

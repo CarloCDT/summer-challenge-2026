@@ -1,0 +1,69 @@
+# PPO for a SUBMITTABLE agent - the same game and tuning as ppo_vs_level2.yaml, but sized to fit
+# CodinGame's 100,000-character source limit once baked by bake_agent.py.
+#
+# Why this config exists: base_channels 64 gives 1,791,235 policy parameters, which is 2,049,707
+# characters at int8 - 20x over the limit. Nothing about the baking process fixes that; the
+# network itself has to be smaller. Measured sizes of the generated file (value head dropped,
+# BatchNorm folded, per-channel quantization, zlib + base85):
+#
+#   base_channels   params      int8 source   int4 source
+#         64      1,791,235     2,049,707 x   1,025,000 x
+#         32        452,227       551,000 x     277,000 x
+#         20        178,723       220,000 x     111,000 x
+#         16        115,267       156,283 x      83,142 OK   <- this config, --quant int4
+#         12         65,667        82,600 OK      42,800 OK
+#          8         29,923        39,300 OK      21,100 OK
+#
+# base_channels 16 only fits at int4, and int4 is lossy - on the 64-channel net int8 already cost
+# 8% of decisions (92.06% agreement vs the torch model, against 99.68% at fp16). If int4 turns
+# out to cost too much accuracy here, drop to base_channels 12 and bake at int8, which fits with
+# room to spare and quantizes far more gently.
+#
+# Train:  python3 -u -m training.train_ppo --config training/configs/ppo_submit.yaml
+# Bake:   python3 bake_agent.py checkpoints/<run>_iterN.pt -o submission.py --quant int4 --verify 20
+# Check:  python3 test_submission.py submission.py --episodes 20
+
+# --- Environment ---
+grid_height: null                 # null = the authentic random size (h 14..20, w = round(h*1.5))
+max_turns: 100                    # Game.MAX_TURNS - the real game length
+opponent_strategy: level2         # BossOpponent, the faithful port of the League 2 Boss
+allow_skip_disrupt: true          # the agent may decline to disrupt
+
+reward_mode: margin               # own score gain minus the opponent's, per turn
+
+# --- Network ---
+# 115,267 policy parameters. This is the whole point of the config - see the table above.
+base_channels: 16
+value_hidden: 256                 # the critic is training-only; bake_agent.py drops it entirely,
+                                  # so its size costs nothing at submission time.
+
+# --- PPO (same tuning as ppo_vs_level2.yaml) ---
+num_iterations: 10000
+games_per_iteration: 32
+num_workers: 32
+gamma: 0.99
+gae_lambda: 0.95
+epsilon_start: 0.5                # a cold start, not a warm one: the 64-channel checkpoints are
+epsilon_end: 0.05                 # a different shape and cannot initialise this network.
+clip_epsilon: 0.2
+ppo_epochs: 2
+minibatch_size: 256
+value_coef: 0.5
+entropy_coef: 0.001
+max_grad_norm: 0.5
+lr: 0.0003                        # higher than the warm-started runs - this one starts from
+lr_end: 0.0                       # scratch and has far fewer parameters to move.
+score_norm: 1000.0
+
+# --- Evaluation (runs right after each checkpoint save) ---
+eval_episodes: 100
+eval_max_turns: 100
+eval_bosses: level1,level1Pro,level2,level2Pro,level2ProMax
+
+# --- Bookkeeping ---
+checkpoint_every: 100
+checkpoint_dir: checkpoints
+init_checkpoint: null             # incompatible shapes with the 64-channel runs
+log_dir: null
+device: null
+seed: null

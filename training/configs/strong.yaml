@@ -1,0 +1,22 @@
+# Deeper search and more self-play per gradient step, for a serious MCTS run.
+#
+# Run: python3 -m training.train --config training/configs/strong.yaml
+
+grid_height: null
+max_turns: 100
+opponent_strategy: greedy
+num_simulations: 200
+eval_batch_size: 64
+c_puct: 1.5
+temperature_moves: 30
+games_per_iteration: 2
+num_iterations: 2000
+train_steps_per_iteration: 40
+batch_size: 256
+buffer_capacity: 200000
+lr: 0.001
+checkpoint_every: 20
+checkpoint_dir: checkpoints
+log_dir: null
+device: null
+seed: null

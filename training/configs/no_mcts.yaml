@@ -1,0 +1,25 @@
+# Search-free baseline: one forward pass per atomic decision instead of num_simulations-many.
+# Much faster per iteration, much weaker training signal (self-imitation, no advantage) - useful
+# for exercising the pipeline, not for producing a strong agent. Prefer train_ppo.py for real runs.
+#
+# Run: python3 -m training.train --config training/configs/no_mcts.yaml
+
+grid_height: null
+max_turns: 100
+opponent_strategy: passive
+use_mcts: false
+num_simulations: 100
+eval_batch_size: 32
+c_puct: 1.5
+temperature_moves: 30
+games_per_iteration: 1
+num_iterations: 1000
+train_steps_per_iteration: 20
+batch_size: 128
+buffer_capacity: 100000
+lr: 0.001
+checkpoint_every: 20
+checkpoint_dir: checkpoints
+log_dir: null
+device: null
+seed: null

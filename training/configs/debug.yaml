@@ -1,0 +1,23 @@
+# Fast smoke test for the MCTS pipeline - confirms it runs and loss moves, in minutes.
+# Not meant to produce a strong agent.
+#
+# Run: python3 -m training.train --config training/configs/debug.yaml
+
+grid_height: 14
+max_turns: 100
+opponent_strategy: passive
+num_simulations: 15
+eval_batch_size: 8
+c_puct: 1.5
+temperature_moves: 10
+games_per_iteration: 1
+num_iterations: 5
+train_steps_per_iteration: 5
+batch_size: 32
+buffer_capacity: 5000
+lr: 0.001
+checkpoint_every: 5
+checkpoint_dir: checkpoints
+log_dir: null
+device: null
+seed: 42

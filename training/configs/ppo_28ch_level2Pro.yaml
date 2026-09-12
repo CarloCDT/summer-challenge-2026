@@ -1,0 +1,66 @@
+# PPO against level2Pro on SHORT 20-turn episodes, evaluated on the full 100-turn game.
+#
+# Same 28-channel setup as ppo_28ch_level1Pro.yaml, warm-started from that run's
+# checkpoints/20260910-174643_iter400.pt instead of starting cold, and stepped up to
+# level2Pro (prices every unfinished connection, commits to the cheapest - never disrupts).
+#
+# READ THIS BEFORE TRUSTING THE EVAL TABLE: training episodes stop at turn 20, so the turn
+# channel only ever spans 0.00-0.20 during training, while the 100-turn eval drives it to
+# 1.00. Four fifths of that channel's range is never seen in training. Expect the eval to
+# lag what the training margin suggests, and treat the gap as the cost of the short episode
+# rather than as the agent being broken. Lengthen max_turns once it is learning.
+#
+# Run: python3 -u -m training.train_ppo --config training/configs/ppo_28ch_level2Pro.yaml
+
+# --- Environment ---
+grid_height: null                 # null = the authentic random size (h 14..20, w = round(h*1.5))
+max_turns: 50                     # SHORT training episode - eval still runs the full 100
+opponent_strategy: level2Pro      # prices every unfinished connection, commits to the cheapest
+allow_skip_disrupt: true          # the agent may decline to disrupt
+
+reward_mode: margin               # own score gain minus the opponent's, per turn. Both players
+                                  # score on the SAME shared connection, so this also discourages
+                                  # completing a route whose path is mostly the opponent's track -
+                                  # that pays them more than it pays you.
+
+# --- Network (RailroadUNet: 2 down / 2 up, conv before and after, critic off the bottleneck) ---
+base_channels: 64
+value_hidden: 256
+
+# --- PPO (the tuning that stabilised ppo_full.yaml: approx_kl 0.19 -> ~0.06) ---
+num_iterations: 500
+games_per_iteration: 64
+num_workers: 32
+gamma: 0.99
+gae_lambda: 0.95
+epsilon_start: 0.25                # lower than a cold start's 0.5 - the warm-started policy
+epsilon_end: 0.05                 # already builds sensible corridors, so less random disruption
+                                  # of them is needed to keep exploring.
+clip_epsilon: 0.2
+ppo_epochs: 2
+minibatch_size: 256
+value_coef: 0.5
+entropy_coef: 0.001
+max_grad_norm: 0.5
+lr: 0.0001
+lr_end: 0.0                       # annealed linearly to ~0 over the run
+score_norm: 1000.0                # per-turn margins are divided by this before GAE
+
+# --- Evaluation (runs right after each checkpoint save, printed to the terminal and logged to
+# TensorBoard as eval/<boss>/*). Greedy, on a fixed set of maps, so successive tables differ
+# because the agent changed rather than because the maps did. All four tiers are kept even though
+# training only sees level2Pro - that is what catches overfitting to this one opponent.
+eval_episodes: 100
+eval_max_turns: 100               # the PRODUCTION length, deliberately != max_turns here. A
+                                  # short eval would rank checkpoints on a game you never
+                                  # play: it rewards racing to one cheap connection, while a
+                                  # 100-turn optimum builds infrastructure for later.
+eval_bosses: level1,level1Pro,level2,level2Pro,level2ProMax
+
+# --- Bookkeeping ---
+checkpoint_every: 100
+checkpoint_dir: checkpoints
+init_checkpoint: checkpoints/20260910-174643_iter400.pt
+log_dir: null
+device: null
+seed: null

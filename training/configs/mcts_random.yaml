@@ -1,0 +1,23 @@
+# MCTS self-play against the random baseline opponent.
+#
+# Run: python3 -m training.train --config training/configs/mcts_random.yaml
+
+grid_height: null
+max_turns: 100
+opponent_strategy: random
+use_mcts: true
+num_simulations: 25
+eval_batch_size: 16
+c_puct: 1.5
+temperature_moves: 30
+games_per_iteration: 1
+num_iterations: 1000
+train_steps_per_iteration: 20
+batch_size: 128
+buffer_capacity: 100000
+lr: 0.001
+checkpoint_every: 20
+checkpoint_dir: checkpoints
+log_dir: null
+device: null
+seed: null

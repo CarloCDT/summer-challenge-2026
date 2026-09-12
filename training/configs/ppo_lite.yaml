@@ -1,0 +1,49 @@
+# PPO on the lite game (railroad_lite_env) - the faithful env stripped down to the part that
+# matters for learning to connect towns:
+#
+#   * plains only, so every track costs 1 of the unchanged 3-point budget = 3 placements/turn
+#   * no DISRUPT, for either player - nothing is ever destroyed
+#   * 25 turns instead of 100
+#   * opponent flips a coin each turn: WAIT, or spend its whole budget on random placements
+#   * 16 observation channels instead of 25 (own/enemy track, 12 town route guides,
+#     off-board padding, active connection)
+#
+# Map generation, town placement, desired connections, connection pathfinding and scoring are
+# still the real thing.
+#
+# Run: python3 -m training.train_lite_ppo --config training/configs/ppo_lite.yaml
+
+# --- Environment ---
+grid_height: null              # null = the authentic random size (h 14..20, w = round(h*1.5))
+max_turns: 25
+opponent_wait_probability: 0.5 # half the turns the opponent does nothing at all
+
+# --- Network (LiteUNet: 2 down / 2 up, conv before and after, critic off the bottleneck) ---
+base_channels: 32              # ~570k params; drop to 24 (~330k) for faster iterations
+value_hidden: 128
+
+# --- PPO ---
+num_iterations: 2_000
+games_per_iteration: 16        # episodes per rollout, dispatched across num_workers
+num_workers: 16
+gamma: 0.99
+gae_lambda: 0.95
+epsilon_start: 0.5             # exploration rate at iteration 0, decaying linearly to
+epsilon_end: 0.05              # epsilon_end. With this probability the policy is sampled from;
+                               # otherwise its argmax is taken - pure sampling almost never
+                               # assembles the contiguous corridor a connection needs.
+clip_epsilon: 0.2
+ppo_epochs: 4
+minibatch_size: 256            # ~75 decisions/game x 16 games = ~1200 transitions/iteration
+value_coef: 0.5
+entropy_coef: 0.01
+max_grad_norm: 0.5
+lr: 0.0003
+
+# --- Bookkeeping ---
+checkpoint_every: 100
+checkpoint_dir: checkpoints
+init_checkpoint: null          # warm-start from a .pt (weights only, fresh optimizer state)
+log_dir: null
+device: null
+seed: null

@@ -1,0 +1,75 @@
+# PPO on the full game against level2 - the SHIPPED League 2 Boss, ported from the original
+# config/level2/Boss.java. This is the opponent the real competition puts in front of you, so it
+# is the one that decides whether the agent actually promotes.
+#
+# Difficulty note: level2 is the EASIER of the two "builds properly" opponents. Measured over 100
+# greedy episodes at iteration 1100 of the previous run:
+#
+#     boss         score      opp    margin    win   conn
+#     level2        3100     1682     +1418   0.89    96%
+#     level2Pro     2790     2257      +533   0.72   100%
+#
+# level2Pro (greedy_autoplace) prices every unfinished desired connection with the same
+# cheapest-path search AUTOPLACE uses and commits to the cheapest, so it finishes routes instead
+# of scattering them. Training here optimises against the real target; ppo_vs_greedy.yaml stays
+# as the harder follow-up tier, and both are still benchmarked after every checkpoint via
+# eval_bosses, so a gain here that comes at level2Pro's expense is visible immediately.
+#
+# Speed: level2 is ~9x cheaper to simulate than greedy_autoplace (0.1s vs 0.9s per 30-turn game
+# with both players building), so iterations run substantially faster at the same worker count.
+#
+# Run: python3 -u -m training.train_ppo --config training/configs/ppo_vs_level2.yaml
+
+# --- Environment ---
+grid_height: null                 # null = the authentic random size (h 14..20, w = round(h*1.5))
+max_turns: 100                    # Game.MAX_TURNS - the real game length
+opponent_strategy: level2ProMax         # BossOpponent, the faithful port of the League 2 Boss
+allow_skip_disrupt: true          # the agent may decline to disrupt
+
+reward_mode: margin               # own score gain minus the opponent's, per turn. Both players
+                                  # score on the SAME shared connection, so this also discourages
+                                  # completing a route whose path is mostly the opponent's track -
+                                  # that pays them more than it pays you.
+
+# --- Network (RailroadUNet: 2 down / 2 up, conv before and after, critic off the bottleneck) ---
+base_channels: 64
+value_hidden: 256
+
+# --- PPO (the tuning that stabilised ppo_full.yaml: approx_kl 0.19 -> ~0.06) ---
+num_iterations: 1_000
+games_per_iteration: 16
+num_workers: 16
+gamma: 0.99
+gae_lambda: 0.95
+epsilon_start: 0.25                # lower than a cold start's 0.5 - the warm-started policy
+epsilon_end: 0.05                 # already builds sensible corridors, so less random disruption
+                                  # of them is needed to keep exploring.
+clip_epsilon: 0.2
+ppo_epochs: 2
+minibatch_size: 256
+value_coef: 0.5
+entropy_coef: 0.001
+max_grad_norm: 0.5
+lr: 0.0001
+lr_end: 0.0                       # annealed linearly to ~0 over the run
+score_norm: 1000.0                # per-turn margins are divided by this before GAE
+
+# --- Evaluation (runs right after each checkpoint save, printed to the terminal and logged to
+# TensorBoard as eval/<boss>/*). Greedy, on a fixed set of maps, so successive tables differ
+# because the agent changed rather than because the maps did. All four tiers are kept even though
+# training only sees level2 - that is what catches overfitting to this one opponent.
+eval_episodes: 100
+eval_max_turns: 100               # must match max_turns and production. A 30-turn eval
+                                  # ranks checkpoints on a game you never play: it rewards
+                                  # racing to one cheap connection, while a 100-turn optimum
+                                  # builds infrastructure that only pays off later.
+eval_bosses: level1,level1Pro,level2,level2Pro,level2ProMax
+
+# --- Bookkeeping ---
+checkpoint_every: 100
+checkpoint_dir: checkpoints
+init_checkpoint: checkpoints/20260910-132423_iter600.pt   # weights only, fresh optimizer state;
+                                  # this run's iteration numbers restart at 0.
+log_dir: null
+device: null
+seed: null

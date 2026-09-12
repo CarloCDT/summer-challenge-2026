@@ -1,0 +1,74 @@
+# PPO on the full, faithful game - every rule as the original Java referee implements it.
+# 10000 iterations against a half-idle random opponent, warm-started from the previous 5000.
+#
+# Tuned after that run peaked near iteration 3500 and then decayed: smaller, fewer, decaying
+# updates (lr, lr_end, ppo_epochs) and much less entropy pressure so the policy can actually
+# commit to a mode instead of being held near-uniform. max_turns stays at 30 for fast iteration -
+# note the real game is 100 turns and scoring compounds, so a final stretch at 100 is worth doing
+# before judging the agent.
+#
+# Action space (spatial policy head, one channel per action kind over the padded 20x30 canvas):
+#   channel 0  PLACE         - compulsory. The place phase only ends once the 3-point paint
+#                              budget can't buy anything, so the agent always spends it in full
+#                              (verified: leftover paint at end of phase is always 0).
+#   channel 1  DISRUPT       - which region to destabilise
+#   channel 2  SKIP_DISRUPT  - decline to disrupt this turn. Offered only when a legal target
+#                              exists, so disrupting is genuinely optional rather than forced.
+#
+# Run: python3 -m training.train_ppo --config training/configs/ppo_full.yaml
+
+# --- Environment ---
+grid_height: null                 # null = the authentic random size (h 14..20, w = round(h*1.5))
+max_turns: 100                    # Game.MAX_TURNS - the real game length
+opponent_strategy: random
+opponent_wait_probability: 0.5    # two independent coin flips per turn: half the time it skips
+opponent_disrupt_probability: 0.5 # placing entirely, and independently half the time it disrupts
+
+allow_skip_disrupt: true          # the agent may decline to disrupt (adds the third channel)
+
+# --- Network (RailroadUNet: 2 down / 2 up, conv before and after, critic off the bottleneck) ---
+# Same shape that worked on the lite game, scaled up for the harder problem: 25 input channels
+# instead of 16, three policy channels instead of one, mixed terrain and 100 turns.
+base_channels: 64                 # ~2.2M params; drop to 48 (~1.2M) for faster iterations
+value_hidden: 256
+
+# --- PPO ---
+num_iterations: 5_000
+games_per_iteration: 32           # episodes per rollout, dispatched across num_workers
+num_workers: 32
+gamma: 0.99
+gae_lambda: 0.95
+epsilon_start: 0.25                # exploration rate at iteration 0, decaying linearly to
+epsilon_end: 0.05                 # epsilon_end. With this probability the policy is sampled
+                                  # from; otherwise its argmax is taken - pure sampling almost
+                                  # never assembles the contiguous corridor a connection needs.
+clip_epsilon: 0.2
+ppo_epochs: 2                     # was 4. Halves how far the policy moves per batch - the
+                                  # previous run's approx_kl climbed 0.076 -> 0.120 and clip_frac
+                                  # sat at 0.30-0.37, i.e. updates were saturating the trust
+                                  # region rather than respecting it.
+minibatch_size: 256
+value_coef: 0.5
+entropy_coef: 0.001               # was 0.005. Even at 0.7x the policy gradient it held the
+                                  # policy at ~84% of a uniform distribution (top-1 probability
+                                  # 0.7-9%), which is why consecutive checkpoints disagreed on
+                                  # 94-100% of argmax decisions: behaviour rode on noise-level
+                                  # logit gaps, so every update reshuffled what the agent did.
+max_grad_norm: 0.5
+lr: 0.0001                        # was 0.0003
+lr_end: 0.0                       # annealed linearly to ~0 over the run. Flat lr is what let the
+                                  # previous run peak around iteration 3500 and then slide back
+                                  # (-747 score per 1000 iterations over the last 1500).
+score_norm: 1000.0                # per-turn rewards are divided by this before GAE. Full games
+                                  # compound to thousands of points, so a small norm would leave
+                                  # the critic chasing returns far outside its useful range.
+
+# --- Bookkeeping ---
+checkpoint_every: 100
+checkpoint_dir: checkpoints
+init_checkpoint: checkpoints/20260910-072235_iter1100.pt   # warm start (weights only, fresh
+                                  # optimizer state). This run's own iteration numbers restart
+                                  # at 0 regardless of how far the source run got.
+log_dir: null
+device: null
+seed: null

@@ -1,0 +1,22 @@
+# Single-forward-pass-per-turn baseline: take the top-k legal PLACE cells each turn, ignore
+# DISRUPT entirely (policy head is 1 channel). The weakest of the three train.py strategies -
+# kept as a fast pipeline check. Prefer train_ppo.py for real runs.
+#
+# Run: python3 -m training.train --config training/configs/connect_towns_topk.yaml
+
+grid_height: null
+max_turns: 50
+opponent_strategy: passive
+topk: 3
+games_per_iteration: 8
+num_workers: 8
+num_iterations: 10000
+train_steps_per_iteration: 20
+batch_size: 128
+buffer_capacity: 100000
+lr: 0.001
+checkpoint_every: 20
+checkpoint_dir: checkpoints
+log_dir: null
+device: null
+seed: null

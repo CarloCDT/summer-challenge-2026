@@ -1,0 +1,41 @@
+# PPO on the full, faithful game - every rule as the original Java referee implements it.
+#
+# The agent is player 0 and acts one atomic decision at a time (one PLACE_TRACKS cell, or one
+# DISRUPT target), which GameSimulator accumulates into whole turns. The policy head is a
+# 2-channel spatial heatmap over the padded 20x30 canvas: channel 0 = PLACE, channel 1 = DISRUPT.
+#
+# Run: python3 -m training.train_ppo --config training/configs/ppo.yaml
+
+# --- Environment ---
+grid_height: null          # null = the authentic random size (h in 14..20, w = round(h*1.5))
+max_turns: 100             # Game.MAX_TURNS
+opponent_strategy: passive # the challenge's own default/League 1 Boss (always WAITs).
+                           # Move to "boss" (the League 2 Boss: AUTOPLACE between two random
+                           # towns) once the agent reliably scores against a passive opponent.
+
+# --- PPO ---
+num_iterations: 2000
+games_per_iteration: 8     # episodes per rollout, dispatched across num_workers
+num_workers: 8
+gamma: 0.99                # discounted: unlike the earlier simplified env, disruption can now
+gae_lambda: 0.95           # ink a region and destroy track, so a connection's future payout is
+                           # no longer guaranteed - undiscounted returns would overvalue it.
+epsilon_start: 0.5         # exploration rate at iteration 0, decaying linearly to epsilon_end.
+epsilon_end: 0.05          # With this probability the policy is sampled from; otherwise its
+                           # argmax is taken. Pure sampling almost never builds the contiguous
+                           # corridor a connection needs, so argmax carries most of the weight.
+clip_epsilon: 0.2
+ppo_epochs: 4
+minibatch_size: 128
+value_coef: 0.5
+entropy_coef: 0.01
+max_grad_norm: 0.5
+lr: 0.0003
+
+# --- Bookkeeping ---
+checkpoint_every: 50
+checkpoint_dir: checkpoints
+init_checkpoint: null      # warm-start from a .pt (weights only, fresh optimizer state)
+log_dir: null
+device: null
+seed: null

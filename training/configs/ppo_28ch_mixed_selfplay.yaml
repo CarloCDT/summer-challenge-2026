@@ -1,0 +1,137 @@
+# PPO from the best checkpoint this project has produced, with the four fixes that the
+# post-mortem of runs/20260910-224257 pointed at. Full 100-turn episodes, an opponent pool
+# including self-play, and compulsory disruption.
+#
+# Warm start: checkpoints/20260910-224257_iter200.pt - the iteration-200 peak that beat its own
+# starting point on all five bosses at once (level2ProMax +2367, win 0.94). That run then spent
+# 600 more iterations destroying it. Everything below is aimed at why.
+#
+# WHAT CHANGED, AND WHY (each is measured, not a guess):
+#
+# 0. THE BUG, fixed in training/ppo.py, not here - it applies to every config. Rollout runs
+#    under model.eval(), so old_log_probs come from BatchNorm's running statistics; ppo_update
+#    called model.train(), which switches BatchNorm to per-minibatch statistics. BatchNorm sits
+#    in the conv trunk, so that changes the policy logits outright. Measured on iter200 with
+#    identical weights and ZERO gradient steps: eval mode gives ratio == 1.0000 for every
+#    sample, train mode gives a median ratio of 0.43 with 86% of samples already outside the
+#    clip range. PPO's premise was violated before the first optimiser step. This is why
+#    train/clip_frac sat at 0.4-0.8 for entire runs, and why cutting lr 10x (1e-4 -> 1e-5)
+#    barely moved it - it was never a step-size problem. It is also what deployment does:
+#    bake_agent.py folds BatchNorm out of running_mean/running_var, so the eval-mode network is
+#    the submitted one. With BatchNorm pinned to eval during the update, clip_frac falls from
+#    0.43 to a ~0.17-0.22 plateau over the first ~10 iterations, and approx_kl from 0.081 to
+#    ~0.017 (measured on the real run, constant lr). An earlier note here claimed it reached
+#    0.00 - that came from a 5-iteration smoke test where lr_end annealed lr to exactly zero by
+#    the last iteration, so those points were an artifact. The load-bearing evidence is the
+#    zero-gradient-step measurement above, not the trend.
+#
+# 1. action_selection: onpolicy  - a smaller, separate correctness point. The PPO ratio itself
+#    was always fine (log_prob is pi_old's own log-probability, so it starts at 1); what was
+#    wrong is the SAMPLING DISTRIBUTION. epsilon-greedy draws from the mixture
+#    mu = (1-eps)*argmax + eps*pi while the surrogate is an expectation over pi_old, so argmax
+#    actions are wildly over-represented (median pi(argmax) is 0.044 for an action taken ~80% of
+#    the time) and the estimator is biased. Sampling on-policy removes that bias. Note this does
+#    NOT reduce clip_frac - measured, it slightly raises it, because sampling visits
+#    low-probability actions whose ratios move faster for a given logit step.
+#
+# 2. force_disrupt: true  - the measured cause of the collapse. iter200 spends 96% of its
+#    disruption opportunities; iter800 declines 48% of them. Disruption points are 1/turn and
+#    never carry over, so a declined disrupt destroys the resource outright, while its payoff
+#    (instability 1->4, then the ink) lands 4+ turns later. A good policy declines ~4% of the
+#    time, so withholding the option costs almost nothing and deletes the attractor. This keeps
+#    allow_skip_disrupt: true on purpose - that flag sets the head width, and turning it off
+#    would narrow the head to 2 channels and make the 3-channel warm start unloadable.
+#
+#    CONSEQUENCE, handled but worth knowing: masking the channel out means it receives exactly
+#    zero gradient (measured: head channel 2 grad norm 0.000 against 15.7 and 10.1 for the other
+#    two), so its weights stay frozen at the warm start's values while the features feeding them
+#    drift all run. Anything downstream that still OFFERS the action would therefore be running
+#    on stale logits. Both places that could are now wired to this flag: the checkpoint records
+#    force_disrupt, evaluate.py builds its simulator with it, and bake_agent.py reads it to drop
+#    the skip branch from the submission.
+#
+# 3. gamma: 0.997  - gamma is applied PER DECISION, not per turn, and there are ~3.4 decisions
+#    per turn. The old 0.99 was therefore 0.966/turn, discounting a 4-turn-delayed ink to 0.87
+#    and the endgame to nearly nothing - it priced disruption out of existence. 0.997 is
+#    ~0.99/turn.
+#
+# 4. max_turns: 100  - the strategy that wins this matchup IS an endgame: the board inks out,
+#    few connections survive, and whoever holds more track on the survivors wins. At max_turns:
+#    50 the agent never saw turns 50-100 at all, and the turn channel only ever spanned 0.00-0.50
+#    against 1.00 at eval. This costs ~2x rollout; mixing in cheaper opponents partly offsets it.
+#
+# Opponent pool: sampled once per game from each game's own RNG. Training 600 iterations against
+# level2ProMax alone halved the margin on every other boss, so the pool keeps the rest alive
+# while still weighting the hardest tier. "self" is the reserved name for self-play against the
+# agent's current weights - it costs no extra IPC (the opponent reuses the state dict already
+# shipped to the worker) and is CHEAPER per game than level2ProMax (~1.7s vs ~3.1s), because it
+# runs one forward pass per turn instead of re-pricing every unfinished connection.
+#
+# self_play_epsilon: 1.0 means the self-play opponent samples from the policy exactly as the
+# agent does. This is not optional decoration - with an argmax opponent (0.0) the mirror match
+# is systematically lopsided (mean margin -3663 over 6 games, because the agent samples and its
+# opponent does not); at 1.0 it is a fair mirror (+43). Keep this equal to the agent's own
+# action selection.
+#
+# EXPECT self_play/score_margin AND win_rate TO DROP relative to the previous run and NOT be
+# comparable to it: the agent now samples during rollout instead of taking argmax, and it faces
+# a mixture rather than one boss. The eval table (greedy, fixed seeds, all five bosses) is the
+# only cross-run comparable number. Judge this run by eval/<boss>/margin and by clip_frac.
+#
+# Run: python3 -u -m training.train_ppo --config training/configs/ppo_28ch_mixed_selfplay.yaml
+
+# --- Environment ---
+grid_height: null                 # null = the authentic random size (h 14..20, w = round(h*1.5))
+max_turns: 100                    # the PRODUCTION horizon - training and eval now agree
+opponent_strategy: level2ProMax   # fallback only; opponent_pool overrides this per game
+allow_skip_disrupt: true          # keeps the 3-channel head so the warm start loads
+force_disrupt: true               # ...but never actually offers SKIP_DISRUPT (see note 2)
+
+opponent_pool:                    # weights, normalised internally; sampled once per game
+  level2ProMax: 0.25               #   the tier that decides promotion
+  level2Pro: 0.25                  #   keeps the pure-builder matchup alive
+  level2: 0.25                     #   the shipped League 2 boss
+  self: 0.25                       #   self-play against the current weights
+self_play_epsilon: 1.0            # opponent samples like the agent - a fair mirror
+
+reward_mode: margin               # own score gain minus the opponent's, per turn. Both players
+                                  # score on the SAME shared connection, so this also discourages
+                                  # completing a route whose path is mostly the opponent's track -
+                                  # that pays them more than it pays you.
+
+# --- Network (RailroadUNet: 2 down / 2 up, conv before and after, critic off the bottleneck) ---
+base_channels: 64
+value_hidden: 256
+
+# --- PPO ---
+num_iterations: 400               # ~2x the old per-iteration cost at 100 turns; the previous
+                                  # peak arrived by iteration 200, so this leaves real headroom
+games_per_iteration: 64
+num_workers: 32
+gamma: 0.997                      # per DECISION (~3.4/turn) => ~0.99 per turn - see note 3
+gae_lambda: 0.95
+action_selection: onpolicy        # see note 1 - this is the correctness fix
+epsilon_start: 0.25               # INERT under onpolicy; kept so the legacy path still works
+epsilon_end: 0.05                 #   if action_selection is switched back to epsilon_greedy
+clip_epsilon: 0.2
+ppo_epochs: 2
+minibatch_size: 256
+value_coef: 0.5
+entropy_coef: 0.001               # exploration now comes from sampling itself, not epsilon
+max_grad_norm: 0.5
+lr: 0.0001
+lr_end: 0.0                       # annealed linearly to ~0 over the run
+score_norm: 1000.0                # per-turn margins are divided by this before GAE
+
+# --- Evaluation (greedy, fixed seeds, all five bosses - the only cross-run comparable number) ---
+eval_episodes: 100
+eval_max_turns: 100
+eval_bosses: level1,level1Pro,level2,level2Pro,level2ProMax
+
+# --- Bookkeeping ---
+checkpoint_every: 100
+checkpoint_dir: checkpoints
+init_checkpoint: checkpoints/20260910-224257_iter200.pt
+log_dir: null
+device: null
+seed: null
