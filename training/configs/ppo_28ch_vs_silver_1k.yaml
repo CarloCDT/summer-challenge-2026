@@ -1,0 +1,140 @@
+# PPO continuing from runs/20260911-114307, 1000 iterations, warm started from that run's FINAL
+# checkpoint. Everything except `num_iterations` and `init_checkpoint` is copied unchanged from
+# ppo_28ch_vs_silver.yaml, deliberately: the only two variables here are the starting point and
+# the length, so whatever this run does is attributable to them.
+#
+# WARM START: checkpoints/20260911-114307_iter300.pt. That run finished all 300 iterations and was
+# healthy throughout - explained variance 0.94 -> 0.98, clip_frac 0.29 -> 0.025, approx_kl 0.027 ->
+# 0.003, self-play margin 2010 -> 3951 (win 0.86), entropy 2.79 -> 1.73, and no cross-boss
+# degradation (level1/level1Pro/level2/level2Pro at win 1.00 on every checkpoint). Where iter300
+# stands on the fixed-seed table:
+#
+#     boss            114307_iter300
+#     level2ProMax     +4692  win 1.00
+#     level2Silver      +558  win 0.71   (100 games)
+#
+# Its sibling iter250 is statistically indistinguishable (+565 win 0.74, SE ~ 0.044) and iter200 is
+# the one that actually moved the CodinGame rank despite scoring WORSE here (+285 win 0.68). That
+# is the "our eval does not predict rank" warning in CLAUDE.md, and it applies to this choice too:
+# iter300 was picked because it is the end of a healthy run, not because the table says it is best.
+#
+#   !! TWO THINGS ABOUT iter300 SPECIFICALLY.
+#   !! 1. It sat at the END of a linear lr anneal, so its weights are near a converged point of a
+#   !!    schedule that had already cooled to ~0. Restarting at lr 1e-4 will move it immediately;
+#   !!    expect the first ~10 iterations to look like a regression before they recover.
+#   !! 2. The optimizer state is NOT reloaded (train_ppo builds a fresh Adam), so momentum and the
+#   !!    second-moment estimates start cold regardless of what the checkpoint carries.
+#
+# WHY 1000 ITERATIONS IS THE RISK IN THIS RUN. The 224257 run was configured for exactly this
+# length, peaked at iteration 200, and had destroyed the peak by 800: own score stayed flat while
+# the OPPONENT's doubled as `conn` climbed 0.51 -> ~0.99, because the policy drifted into
+# completing every available connection including routes whose path is mostly the opponent's
+# track, which pays them as much as it pays you. reward_mode: margin is supposed to punish exactly
+# that and did not. The BatchNorm fix (see ppo.py::ppo_update) removed the mechanism behind the
+# random-walking, and the 300-iteration run above was healthy end to end - but that run was never
+# asked to go past 300, so 1000 is genuinely untested territory for the fixed trainer.
+#
+#   !! STOP CONDITIONS - check these rather than waiting for iteration 1000:
+#   !! - self_play/score_margin turning over, or self_play/win_rate falling. On the 224257 run
+#   !!   these went +416 -> -1185 and 0.53 -> 0.08 while the run was still going. PPO making its
+#   !!   own training objective worse is the earliest honest signal, and it is decisive.
+#   !! - train/clip_frac climbing back above ~0.25 and staying there, especially if it is
+#   !!   insensitive to lr. Healthy is 0.05-0.2; the 114307 run ended at 0.025.
+#   !! - train/explained_variance falling well below ~0.9. It reached 0.98 on the warm start, and
+#   !!   it bounds how much long-horizon credit assignment is working at all.
+#   !! - eval/level2Silver/margin peaking and then declining across two consecutive checkpoints.
+#   !! PICK THE CHECKPOINT FROM THE EVAL TABLE, NEVER THE LAST ONE. 20 are written here.
+#
+# The lr schedule is the one thing 1000 iterations silently changes even though the lr line itself
+# is identical. decay_progress = iteration / (num_iterations - 1), so lr anneals over the FULL
+# count: at iteration 200 this run is still at ~8.0e-5 where a 300-iteration run would be at
+# ~3.3e-5. This run is hotter for far longer, which is the point of the length and also the reason
+# it can wander further from the warm start.
+#
+# WHAT level2Silver IS: a bake we actually submitted, driven as a subprocess over the referee's
+# wire protocol. Not the checkpoint behind it - the int4 bake reproduces only ~62% of its own torch
+# model's argmax moves, so the checkpoint is a different player with the same score. It reads a
+# FROZEN copy under baselines/ (the rank-288 bake), NOT the live submission.py, so re-baking during
+# this run is safe and eval/level2Silver/margin stays comparable with the 114307 run's table.
+#
+# Note the warm start and the opponent are close relatives: level2Silver is the int4 distillation
+# of 114307_iter200, and this run starts from 114307_iter300. The agent begins by playing a
+# quantized cousin of itself. That is what the previous run did too, and it is the sense in which
+# "beat the predecessor" is literally the objective being optimised here - see the non-transitivity
+# warning in CLAUDE.md before reading a win rate against this pool as progress in the arena.
+#
+# Run: python3 -u -m training.train_ppo --config training/configs/ppo_28ch_vs_silver_1k.yaml
+
+# --- Environment ---
+grid_height: null                 # null = the authentic random size (h 14..20, w = round(h*1.5))
+max_turns: 100                    # the PRODUCTION horizon - training and eval agree
+opponent_strategy: level2Silver   # fallback only; opponent_pool overrides this per game
+allow_skip_disrupt: true          # keeps the 3-channel head so the warm start loads
+force_disrupt: true               # ...but never offers SKIP_DISRUPT. Recorded in the checkpoint,
+                                  # so evaluate.py and bake_agent.py follow suit automatically
+                                  # instead of scoring a frozen channel.
+
+opponent_pool:                    # weights, normalised internally; sampled once per game
+  level2Silver: 0.50              #   the only opponent still contested (win 0.71 at the warm start)
+  level2ProMax: 0.20              #   the inking tier - won 1.00, but keep it sharp
+  self: 0.20                      #   self-play against the current weights
+  level2Pro: 0.10                 #   pure builder, guards against forgetting how to build
+self_play_epsilon: 1.0            # opponent samples like the agent - a fair mirror. Keep this
+                                  # equal to the agent's own action selection.
+
+reward_mode: margin               # own score gain minus the opponent's, per turn. Both players
+                                  # score on the SAME shared connection, so this also discourages
+                                  # completing a route whose path is mostly the opponent's track.
+
+# --- Network (RailroadUNet: 2 down / 2 up, conv before and after, critic off the bottleneck) ---
+base_channels: 64
+value_hidden: 256
+
+# --- PPO ---
+num_iterations: 1000              # lr anneals over the FULL count - see the header. Stopping this
+                                  # early leaves lr well above its floor, which is fine, but the
+                                  # run is then not the run this file describes.
+games_per_iteration: 64           # 2 games per worker: enough to smooth stragglers without
+                                  # pickling the ~8.8 MB state dict more often than necessary
+num_workers: 32                   # = nproc on this machine; games_per_iteration is a multiple
+gamma: 0.997                      # per DECISION (~2.96/turn, measured) => ~0.991 per turn
+gae_lambda: 0.95                  # NOTE: the real-reward horizon is 1/(1-gamma*lambda) ~ 19
+                                  # decisions (~6 turns), NOT 1/(1-gamma). Everything past that
+                                  # is the critic's job, and train/explained_variance is what
+                                  # tells you whether it is doing it. Raising this to 0.98 would
+                                  # roughly triple the horizon at the cost of variance - the top
+                                  # candidate experiment, deliberately NOT bundled here so the
+                                  # length and warm start can be attributed on their own.
+action_selection: onpolicy        # behaviour policy == policy, so the PPO ratio is unbiased
+clip_epsilon: 0.2
+ppo_epochs: 2
+minibatch_size: 256
+value_coef: 0.5
+entropy_coef: 0.001               # exploration comes from sampling itself. Entropy was 1.73 at
+                                  # the warm start and still falling; below ~1.5 the policy is
+                                  # going deterministic and this is the knob to raise. Watch it
+                                  # early - a 1000-iteration run has far longer to collapse than
+                                  # the 300 this checkpoint came from.
+max_grad_norm: 0.5
+lr: 0.0001
+lr_end: 0.0                       # annealed linearly to ~0 over num_iterations
+score_norm: 1000.0                # per-turn margins are divided by this before GAE
+
+# --- Evaluation (greedy, fixed seeds - the only cross-run comparable number) ---
+eval_episodes: 100
+eval_max_turns: 100
+eval_bosses: level1,level1Pro,level2,level2Pro,level2ProMax,level2Silver
+# level2Silver reads the FROZEN bake under baselines/, not the live submission.py, so this column
+# is directly comparable with the 114307 run's table and with anything measured from here on.
+
+# --- Bookkeeping ---
+checkpoint_every: 50              # 20 checkpoints over 1000 iterations, each followed by a full
+                                  # eval table. This project's runs peak NARROWLY - the previous
+                                  # 1000-iteration run's best was iteration 200 and it was gone
+                                  # by 300 - so the cadence exists to capture the peak without
+                                  # having to stop the run by hand.
+checkpoint_dir: checkpoints
+init_checkpoint: checkpoints/20260911-114307_iter300.pt
+log_dir: null
+device: null
+seed: null
