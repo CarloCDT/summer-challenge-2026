@@ -439,8 +439,31 @@ class Level2Silver3Opponent(BakedSubmissionOpponent):
     )
 
 
+class Level2Silver4Opponent(BakedSubmissionOpponent):
+    """`level2Silver4`: the FOURTH frozen rung, added 2026-09-13 as the current best candidate.
+
+    The bake of `20260913-113208-distill_iter50.pt`, distilled from teacher
+    `20260913-065817_iter200.pt`. Same machinery as the rungs above; only the frozen file differs.
+
+    Note the lineage when training against it: its teacher IS `065817_iter200`, so a PPO run warm
+    started from that checkpoint and trained against this rung is playing the int4 distillation of
+    its own starting weights - close to a mirror, but a FROZEN one, so unlike `self` it does not
+    move with the agent.
+    """
+
+    TIER_NAME = "level2Silver4"
+
+    #: Verified byte-identical to the `submission.py` baked from that checkpoint (87,420 chars,
+    #: int4) on 2026-09-13.
+    DEFAULT_PATH = (
+        Path(__file__).resolve().parent.parent
+        / "baselines"
+        / "20260913-113208-distill_iter50.py"
+    )
+
+
 BOSS_TIERS = ("level1", "level1Pro", "level2", "level2Pro", "level2ProMax", "level2Silver",
-              "level2Silver2", "level2Silver3")
+              "level2Silver2", "level2Silver3", "level2Silver4")
 
 OPPONENT_STRATEGIES = {
     # Faithful ports of the challenge's own Boss AIs
@@ -454,7 +477,8 @@ OPPONENT_STRATEGIES = {
     "level2ProMax": Level2ProMaxOpponent,     #   the same, plus deterministic disruption
     "level2Silver": BakedSubmissionOpponent,  #   a bake we submitted, frozen under baselines/
     "level2Silver2": Level2Silver2Opponent,   #   a second, stronger frozen rung
-    "level2Silver3": Level2Silver3Opponent,   #   a third - the current top of the league
+    "level2Silver3": Level2Silver3Opponent,   #   a third
+    "level2Silver4": Level2Silver4Opponent,   #   a fourth - the current best candidate
     "random": RandomOpponent,
     "greedy": GreedyOpponent,
     "greedy_autoplace": GreedyAutoplaceOpponent,

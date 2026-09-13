@@ -93,7 +93,7 @@ a different game than it trained on.
 ## Bosses
 
 `BOSS_TIERS = level1, level1Pro, level2, level2Pro, level2ProMax, level2Silver, level2Silver2,
-level2Silver3`
+level2Silver3, level2Silver4`
 
 - `level1` — always waits (the shipped League 1 boss).
 - `level2` — AUTOPLACE between **two random towns** every turn (the shipped League 2 boss).
@@ -137,6 +137,14 @@ level2Silver3`
   as warned at the top. Note also the scale — those games score 960 to 857, against ~23,000 versus
   a scripted builder. Two strong disruptors ink each other out, and that mutual-destruction regime
   is most of what the league measures.
+
+- `level2Silver4` — **the fourth rung, added 2026-09-13, the current best candidate.**
+  `baselines/20260913-113208-distill_iter50.py`, the bake of the student distilled from teacher
+  `20260913-065817_iter200`. That teacher is the warm start of `ppo_28ch_vs_silver3_1k.yaml`, which
+  now trains against **this rung alone** — no `opponent_pool`, no self-play (decided 2026-09-13).
+  Consequences worth knowing: the run plays a frozen near-mirror of its own starting weights; the
+  `self_play/*` scalars and their early warning are gone; and with one training opponent,
+  specialisation is the likeliest failure, so every other rung is held out in `eval_bosses`.
 
 `level2Silver` is deliberately the *file*, not the checkpoint behind it. Loading that checkpoint
 into torch would be a different player: the bake is int4 with BatchNorm folded and reproduces only

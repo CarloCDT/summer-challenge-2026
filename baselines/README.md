@@ -1,8 +1,7 @@
 # Frozen baselines
 
-Bakes we have actually submitted, kept byte-for-byte. **The `level2Silver`, `level2Silver2` and
-`level2Silver3` bosses read these, not the live `submission.py`** — that is the entire point of the
-directory.
+Bakes we have actually submitted, kept byte-for-byte. **The `level2Silver` through `level2Silver4`
+bosses read these, not the live `submission.py`** — that is the entire point of the directory.
 
 It used to read `submission.py`, which made it live state: re-baking silently changed the training
 opponent and the eval baseline of anything then running, and `eval/level2Silver/margin` stopped
@@ -12,6 +11,7 @@ thing across re-bakes and across runs.
 | file | baked from | note |
 |---|---|---|
 | `20260911-144318-distill_iter50_rank288.py` | `checkpoints/20260911-144318-distill_iter50.pt`, teacher `20260911-114307_iter200.pt` | 87,679 chars, int4, quantization-aware. Reached **CodinGame rank ~288** — the only agent here validated from outside our own eval table. **This is what `level2Silver` plays as.** |
+| `20260913-113208-distill_iter50.py` | `checkpoints/20260913-113208-distill_iter50.pt`, teacher `20260913-065817_iter200.pt` | 87,420 chars, int4, quantization-aware, value-distilled. **This is what `level2Silver4` plays as** — the best candidate as of 2026-09-13, and the sole training opponent of `ppo_28ch_vs_silver3_1k.yaml`. Verified byte-identical to a re-bake of its checkpoint; playing `submission.py` against it scores 0:0 on every seed. Its teacher is that config's warm start, so training against it is close to a frozen mirror. |
 | `20260912-210537-distill_iter50.py` | `checkpoints/20260912-210537-distill_iter50.pt`, teacher `20260912-155239_iter500.pt` | 87,348 chars, int4, quantization-aware, value-distilled (critic correlation 0.975 with its teacher). **This is what `level2Silver3` plays as**, and the current top of the league. Submitted 2026-09-12; arena result not yet in. |
 | `20260912-124725-distill_iter50.py` | `checkpoints/20260912-124725-distill_iter50.pt`, teacher `20260912-074038_iter350.pt` | 87,104 chars, int4, quantization-aware. First student distilled with `value_loss_weight`, off the `win_bonus` teacher. **This is what `level2Silver2` plays as.** Not yet submitted, so it carries **no arena evidence** — it is a stronger local bar, not a validated one. |
 
@@ -48,13 +48,13 @@ records the checkpoint it came from, then point `BakedSubmissionOpponent.DEFAULT
 is deliberately a code change rather than a file copy, because it moves every number the tier has
 ever produced — record which baseline a table was measured against.
 
-A second and third frozen rung were added that way on 2026-09-12 (`Level2Silver2Opponent` and
-`Level2Silver3Opponent`, each a subclass pinning its own `DEFAULT_PATH`, plus entries in
+A second, third and fourth frozen rung were added that way on 2026-09-12/13 (`Level2Silver2Opponent`,
+`Level2Silver3Opponent` and `Level2Silver4Opponent`, each a subclass pinning its own `DEFAULT_PATH`, plus entries in
 `BOSS_TIERS` and `OPPONENT_STRATEGIES`). Adding a rung is
 preferred over repointing `DEFAULT_PATH`: repointing would retire the rank-288 bake and silently
 change the meaning of every number ever measured against that tier, while a new rung keeps both
 columns. Error messages read the tier name off `TIER_NAME` so a failure names the rung that
 actually failed rather than always saying `level2Silver`.
 
-No rung is **held out** — all three descend from the lineage everything here now trains on, so they
+No rung is **held out** — all four descend from the lineage everything here now trains on, so they
 measure progress against a fixed bar, not generalisation. That remains open in CLAUDE.md.
