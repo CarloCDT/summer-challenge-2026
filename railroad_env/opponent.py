@@ -282,6 +282,10 @@ class BakedSubmissionOpponent(OpponentStrategy):
     rather than silently desyncing.
     """
 
+    #: The tier this class is registered as, used in its error messages. Subclasses that pin a
+    #: different baseline override it, so a failure names the rung that actually failed.
+    TIER_NAME = "level2Silver"
+
     #: A frozen bake, never the live submission.py - see the class docstring.
     DEFAULT_PATH = (
         Path(__file__).resolve().parent.parent
@@ -298,7 +302,7 @@ class BakedSubmissionOpponent(OpponentStrategy):
     def __deepcopy__(self, memo):
         if self._started:
             raise RuntimeError(
-                "level2Silver cannot be copied once its game has started - the "
+                f"{self.TIER_NAME} cannot be copied once its game has started - the "
                 "subprocess holds turn state that cannot be forked. This opponent does not "
                 "support GameSimulator.clone()/MCTS search."
             )
@@ -312,7 +316,7 @@ class BakedSubmissionOpponent(OpponentStrategy):
     def _start(self, state: GameState, player_id: int) -> None:
         if not self.submission_path.exists():
             raise FileNotFoundError(
-                f"level2Silver needs a baked agent at {self.submission_path}. That is a frozen "
+                f"{self.TIER_NAME} needs a baked agent at {self.submission_path}. That is a frozen "
                 f"baseline, so the fix is to restore the file (it is tracked in git), not to "
                 f"re-bake it. To play a different agent as this boss, bake one with `python3 "
                 f"bake_agent.py <checkpoint> -o <file>` and pass "
@@ -335,7 +339,7 @@ class BakedSubmissionOpponent(OpponentStrategy):
             self._start(state, player_id)
         if self._proc is None:
             raise RuntimeError(
-                "level2Silver was asked for a turn after its game ended. The subprocess is "
+                f"{self.TIER_NAME} was asked for a turn after its game ended. The subprocess is "
                 "closed on the turn that reaches max_turns and cannot be resumed - a fresh one "
                 "would restart its internal turn counter and play a different game. Build a new "
                 "opponent per game."
@@ -374,7 +378,69 @@ class BakedSubmissionOpponent(OpponentStrategy):
             pass
 
 
-BOSS_TIERS = ("level1", "level1Pro", "level2", "level2Pro", "level2ProMax", "level2Silver")
+class Level2Silver2Opponent(BakedSubmissionOpponent):
+    """`level2Silver2`: the SECOND frozen rung, and the reason `baselines/` is a directory.
+
+    Identical machinery to `level2Silver` - the same subprocess over the same wire protocol, the
+    same statefulness, the same refusal to be deep-copied mid-game. The only difference is which
+    frozen file it plays, and that is the whole idea: two rungs instead of one turn `baselines/`
+    from an archive into a small league, so "is this agent better" can be asked against a
+    population of past selves rather than against a single opponent the pool is 30% weighted to.
+
+    Why a second tier rather than moving DEFAULT_PATH. Repointing `level2Silver` would retire the
+    rank-288 bake, and that is the only agent in this repo with evidence from outside our own eval
+    table - every number ever measured against that tier would silently change meaning. Adding a
+    rung keeps both columns and costs one class.
+
+    What this rung is NOT: held out. It is a bake of a student descended from the same lineage as
+    everything we now train, so it measures progress against a fixed bar, not generalisation. Both
+    rungs share that limitation - see CLAUDE.md's held-out-eval backlog item.
+
+    Adding it to `BOSS_TIERS` lengthens any eval that does not pin `eval_bosses` by roughly another
+    second per episode, on top of what `level2Silver` already costs.
+    """
+
+    TIER_NAME = "level2Silver2"
+
+    #: The bake of `checkpoints/20260912-124725-distill_iter50.pt` - the first student distilled
+    #: with `value_loss_weight`, off the win_bonus teacher `20260912-074038_iter350`. Verified
+    #: byte-identical to the `submission.py` baked from that checkpoint on 2026-09-12.
+    DEFAULT_PATH = (
+        Path(__file__).resolve().parent.parent
+        / "baselines"
+        / "20260912-124725-distill_iter50.py"
+    )
+
+
+class Level2Silver3Opponent(BakedSubmissionOpponent):
+    """`level2Silver3`: the THIRD frozen rung, and the current top of the league.
+
+    Same machinery as the two rungs above it; only the frozen file differs. Added 2026-09-12 from
+    the `submission.py` baked out of `20260912-210537-distill_iter50.pt` - a student distilled with
+    `value_loss_weight`, so unlike the rank-288 bake its critic actually received a gradient.
+
+    Adding rather than repointing, for the third time and for the same reason: each rung is the
+    fixed meaning of every number ever measured against it. Retiring one silently rewrites history;
+    adding one costs a class and keeps the ladder readable.
+
+    None of the three rungs is HELD OUT - every one descends from the lineage this repo trains on,
+    so the league measures progress against a fixed bar, not generalisation. `level2ProMax` is the
+    held-out detector (see `ppo_28ch_vs_silver2.yaml`), not anything in `baselines/`.
+    """
+
+    TIER_NAME = "level2Silver3"
+
+    #: The bake of `checkpoints/20260912-210537-distill_iter50.pt`. Verified byte-identical to the
+    #: `submission.py` baked from that checkpoint on 2026-09-12 (87,348 chars, int4).
+    DEFAULT_PATH = (
+        Path(__file__).resolve().parent.parent
+        / "baselines"
+        / "20260912-210537-distill_iter50.py"
+    )
+
+
+BOSS_TIERS = ("level1", "level1Pro", "level2", "level2Pro", "level2ProMax", "level2Silver",
+              "level2Silver2", "level2Silver3")
 
 OPPONENT_STRATEGIES = {
     # Faithful ports of the challenge's own Boss AIs
@@ -387,6 +453,8 @@ OPPONENT_STRATEGIES = {
     "level2Pro": GreedyAutoplaceOpponent,     # cheapest-path AUTOPLACE, always building
     "level2ProMax": Level2ProMaxOpponent,     #   the same, plus deterministic disruption
     "level2Silver": BakedSubmissionOpponent,  #   a bake we submitted, frozen under baselines/
+    "level2Silver2": Level2Silver2Opponent,   #   a second, stronger frozen rung
+    "level2Silver3": Level2Silver3Opponent,   #   a third - the current top of the league
     "random": RandomOpponent,
     "greedy": GreedyOpponent,
     "greedy_autoplace": GreedyAutoplaceOpponent,
