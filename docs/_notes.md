@@ -1,7 +1,6 @@
 
-Champions: checkpoints/20260910-224257_iter200.pt
+Champions: checkpoints/20260913-065817_iter200.pt
 
-checkpoints/20260911-082014_iter100.pt
 
 1. Train the teacher
 python3 -u -m training.train_ppo --config training/configs/ppo_28ch_level1Pro.yaml
@@ -12,16 +11,17 @@ python3 -u -m training.train_ppo --config training/configs/ppo_28ch_vs_silver.ya
 2. Train the student
 
 python3 -u -m training.distill --config training/configs/distill.yaml
+python3 -u -m training.distill --config training/configs/distill.yaml
 
 
 3. Bake
 
-python3 bake_agent.py checkpoints/20260911-144318-distill_iter50.pt -o submission.py --verify 5
+python3 bake_agent.py checkpoints/20260912-210537-distill_iter50.pt -o submission.py --verify 5
 
 
 4. Check it before pasting
 
-python3 test_submission.py submission.py --opponent level2ProMax --episodes 50
+python3 test_submission.py submission.py --opponent level2Silver --episodes 50
 
 
 I have created an empty repo in /home/carlo/claude_env, add the non-lite environment there, a readme of how to sue it and a notebook on how to play it against the bosses we have created. the idea is this will be shared for others to train their models.
