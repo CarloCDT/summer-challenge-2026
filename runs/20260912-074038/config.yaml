@@ -1,0 +1,44 @@
+num_iterations: 1000
+games_per_iteration: 64
+gamma: 0.997
+gae_lambda: 0.98
+epsilon_start: 0.5
+epsilon_end: 0.05
+clip_epsilon: 0.2
+ppo_epochs: 2
+minibatch_size: 256
+value_coef: 0.5
+entropy_coef: 0.001
+max_grad_norm: 0.5
+lr: 5.0e-05
+lr_end: 0.0
+base_channels: 64
+channels: null
+value_hidden: 256
+score_norm: 1000.0
+allow_skip_disrupt: true
+reward_mode: margin
+win_bonus: 5000.0
+force_disrupt: true
+action_selection: onpolicy
+opponent_pool:
+  level2Silver: 0.4
+  level2ProMax: 0.15
+  self: 0.3
+  level2Pro: 0.15
+self_play_epsilon: 1.0
+eval_episodes: 100
+eval_max_turns: 100
+eval_bosses: level1,level1Pro,level2,level2Pro,level2ProMax,level2Silver
+checkpoint_every: 50
+checkpoint_dir: checkpoints
+init_checkpoint: checkpoints/20260911-114307_iter300.pt
+log_dir: runs/20260912-074038
+device: cuda
+grid_height: null
+max_turns: 100
+opponent_strategy: level2Silver
+opponent_wait_probability: 0.0
+opponent_disrupt_probability: 0.5
+seed: null
+num_workers: 32
