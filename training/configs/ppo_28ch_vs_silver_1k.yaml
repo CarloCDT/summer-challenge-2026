@@ -102,10 +102,10 @@ force_disrupt: true               # ...but never offers SKIP_DISRUPT. Recorded i
                                   # instead of scoring a frozen channel.
 
 opponent_pool:                    # weights, normalised internally; sampled once per game
-  level2Silver: 0.50              #   the only opponent still contested (win 0.71 at the warm start)
-  level2ProMax: 0.20              #   the inking tier - won 1.00, but keep it sharp
-  self: 0.20                      #   self-play against the current weights
-  level2Pro: 0.10                 #   pure builder, guards against forgetting how to build
+  level2Silver: 0.40              #   the only opponent still contested (win 0.71 at the warm start)
+  level2ProMax: 0.15              #   the inking tier - won 1.00, but keep it sharp
+  self: 0.30                      #   self-play against the current weights
+  level2Pro: 0.15                 #   pure builder, guards against forgetting how to build
 self_play_epsilon: 1.0            # opponent samples like the agent - a fair mirror. Keep this
                                   # equal to the agent's own action selection.
 

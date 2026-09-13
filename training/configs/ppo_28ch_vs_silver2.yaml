@@ -1,0 +1,288 @@
+# PPO forked from runs/20260912-074038 at its iteration-500 checkpoint, to put the SECOND frozen
+# rung (level2Silver2) into the training pool. It is the 1k config with two substantive changes.
+#
+#   !! WHAT MOVES relative to ppo_28ch_vs_silver_1k.yaml:
+#   !!   init_checkpoint  114307_iter300 -> 074038_iter500
+#   !!   opponent_pool    level2Silver 0.40 -> level2Silver2 0.35; self 0.30 -> 0.50;
+#   !!                     level2ProMax 0.15 -> REMOVED (held out)
+#   !!   entropy_coef     0.001 -> 0.003
+#   !!   eval_bosses      + level2Silver2   (you cannot pick a checkpoint on a column you don't log)
+#   !!   num_iterations   1000 -> 500       } these two together REPRODUCE the parent's lr tail
+#   !!   lr               5e-5 -> 2.5e-5    } exactly - see "CONTINUING THE SCHEDULE" below
+#   !! Everything else - gamma, gae_lambda 0.98, win_bonus 5000, clip, epochs, minibatch, network -
+#   !! is unchanged, deliberately.
+#
+# THE ONE QUESTION THIS RUN ASKS: the parent had no opponent left that could teach it anything, so
+# it spent 500 iterations gaining 5% against the one it trained on and losing 14.8% against the
+# inking boss. There is no stronger scripted opponent to reach for - simple bosses are beaten
+# trivially and teach nothing - so the only opponent that scales with the agent is the agent. This
+# run puts half the pool on that, raises entropy so both seats keep exploring, and holds
+# level2ProMax out so the answer is legible instead of flattering.
+#
+#   !! lr STAYS AT THE PARENT'S TAIL VALUE deliberately, even though the objective changed. Three
+#   !! things already move here and the parent config's own header preaches against stacking more.
+#   !! If this run adapts too slowly to the new pool, raising lr is the NEXT experiment, on its own.
+#
+# THIS IS A FORK, NOT A CONTINUATION. runs/20260912-074038 was still running at iteration 537 when
+# this file was written, so iter500 is a mid-run checkpoint of a live job and the parent will keep
+# producing later ones. Two consequences. Do not assume iter500 is that run's best - check its eval
+# table first. And if both run at once they contend for the same 32 cores, which roughly halves
+# both; the parent is ~93% rollout, so this is a real cost, not a rounding error.
+#
+# WHY level2Silver2 AT ALL: THE OLD RUNG IS SOLVED. The pool was 40-50% weighted to level2Silver
+# precisely because it was the only opponent still in doubt. It no longer is. Measured on the warm
+# start itself (12 greedy games each, single-threaded so as not to disturb the live parent run):
+#
+#     opponent        074038_iter500        what it is
+#     level2Silver     +1372  win 0.92      the rank-288 bake, frozen
+#     level2Silver2     +293  win 0.83      the 2026-09-12 bake, frozen
+#
+# and the parent run's own 100-game table has level2Silver at +1168 win 0.90 at iteration 500,
+# against +767 win 0.84 at iteration 50. An opponent won 0.9 of the time supplies almost no
+# gradient about winning and no losses for anything downstream to learn from - it was the direct
+# cause of the win-probability fits collapsing to the base rate (see CLAUDE.md). level2Silver2 is
+# the same machinery pointed at a harder frozen file, and at 0.83 it is the most contested opponent
+# this repo currently owns.
+#
+#   !! 12 GAMES IS A SKETCH, NOT A MEASUREMENT. SE on a win rate at n=12 is ~0.11, so 0.92 and 0.83
+#   !! are two standard errors apart at best. If the pool weights matter to you, re-measure at 100
+#   !! games BEFORE launching - it is one command and the run is 500 iterations long:
+#   !!   python3 evaluate_checkpoints.py checkpoints/20260912-074038_iter500.pt \
+#   !!       --bosses level2Silver,level2Silver2 --episodes 100
+#
+# WHAT level2Silver2 IS NOT: HELD OUT. It is the int4 distillation of THIS run's own teacher
+# (20260912-074038_iter350), so the agent starts by playing a quantized descendant of itself, from
+# 150 iterations earlier. That is the same incestuous setup the previous two runs had, and it is
+# exactly what CLAUDE.md's non-transitivity warning is about: beating it is not evidence of ranking
+# better in the arena, and it is 40% of the objective being optimised here. The honest measure is
+# still an opponent kept OUT of the pool, and we do not have one. Do not read a rising
+# eval/level2Silver2/margin as arena progress.
+#
+# WHY KEEP level2Silver AT 0.10 rather than dropping it. It is the only agent in the repo with
+# evidence from outside our own eval table, so it is the one opponent worth not forgetting how to
+# beat. A thin slice is anti-forgetting insurance, not a teaching signal.
+#
+#   !! POOL WEIGHTS DO NOT DO WHAT THEY LOOK LIKE THEY DO. Advantages are normalised ONCE globally
+#   !! over the mixed batch (ppo.py:331), so an opponent's share of the gradient is set by its
+#   !! RETURN MAGNITUDE, not by its weight here. Measured on 114307_iter300: level2Pro at weight
+#   !! 0.10 contributed 34.3% of the advantage mass while level2Silver at 0.50 contributed 23.6%
+#   !! and self-play 6.7% for 20% of the compute. That measurement predates win_bonus, which adds
+#   !! a +/-5.0 terminal term and changes every one of those magnitudes, so the split under THIS
+#   !! config is unknown. Per-opponent reward normalisation is the real fix and is still backlog.
+#
+# CONTINUING THE SCHEDULE RATHER THAN RESTARTING IT. decay_progress = iteration/(num_iterations-1),
+# so the parent's lr at its iteration 500 was 5e-5 * (1 - 500/999) = 2.50e-5. Setting lr to that
+# and num_iterations to the remaining 500 makes this run's schedule the parent's tail, exactly:
+#
+#     parent iteration      parent lr        this run (iteration - 500)      this run's lr
+#                  500        2.50e-5                                 0            2.50e-5
+#                  750        1.25e-5                               250            1.25e-5
+#                  999              0                               499                  0
+#
+# The alternative - restarting at 5e-5 - would double the step on weights that have already cooled
+# through half an anneal, and the parent config's own header warns what that does to a checkpoint
+# sitting at the end of a schedule. If you want a genuinely hotter run, that is a separate
+# experiment and should move only lr.
+#
+#   !! THE OPTIMIZER STATE IS NOT RELOADED. train_ppo builds a fresh Adam, so momentum and the
+#   !! second-moment estimates start cold whatever the checkpoint carries. The lr matches; the
+#   !! optimizer does not. Expect the first few iterations to look worse than the parent's did at
+#   !! the same point, and do not stop on that.
+#
+# WHERE THE WARM START STANDS, from the parent run's own 100-game tables at iteration 500:
+#
+#     boss             074038_iter500
+#     level2ProMax      +4504
+#     level2Silver      +1168  win 0.90
+#
+# and the parent was healthy at that point: clip_frac ~0.13, approx_kl ~0.011, explained variance
+# ~0.91, entropy ~1.57, self-play margin flat at ~2800 across 440 iterations.
+#
+#   !! SELF-PLAY MARGIN BEING FLAT IS NOT A PLATEAU. The self opponent is the CURRENT model - the
+#   !! same live object, no snapshot, no lag - so it improves exactly as fast as the agent and the
+#   !! margin is a treadmill. Measured on the parent: self-play margin 3013 -> 2797 and win rate
+#   !! 0.75 -> 0.78 over 443 iterations while eval against a fixed opponent went +767 -> +1168.
+#   !! Read self-play only as an ALARM (a falling or negative margin means PPO is making its own
+#   !! objective worse), never as evidence of progress. The 0.78 itself is a procedural artifact:
+#   !! the agent re-encodes between sub-decisions and the mirror commits a whole turn from one
+#   !! forward pass, the way the baked submission does.
+#
+#   !! STOP CONDITIONS - check these rather than waiting for iteration 500:
+#   !! - self_play/score_margin turning over or going negative. Decisive; see above for why the
+#   !!   level is meaningless but the DIRECTION is not.
+#   !! - train/clip_frac climbing back above ~0.25 and staying there, especially if insensitive to
+#   !!   lr. Healthy is 0.05-0.2; the parent sat at 0.13.
+#   !! - train/explained_variance below ~0.9 after the first ~20 iterations. The critic already
+#   !!   absorbed win_bonus in the parent run, so unlike that run's start there is no excuse for a
+#   !!   dip here - this warm start begins at ~0.91.
+#   !! - eval/level2Silver2/margin peaking then declining across two consecutive checkpoints. This
+#   !!   is the column that matters now; level2Silver is kept for continuity, not for selection.
+#   !! PICK THE CHECKPOINT FROM THE EVAL TABLE, NEVER THE LAST ONE. 10 are written here.
+#
+# Run: python3 -u -m training.train_ppo --config training/configs/ppo_28ch_vs_silver2.yaml
+
+# --- Environment ---
+grid_height: null                 # null = the authentic random size (h 14..20, w = round(h*1.5))
+max_turns: 100                    # the PRODUCTION horizon - training and eval agree
+opponent_strategy: level2Silver2  # fallback only; opponent_pool overrides this per game
+allow_skip_disrupt: true          # keeps the 3-channel head so the warm start loads
+force_disrupt: true               # ...but never offers SKIP_DISRUPT. Recorded in the checkpoint,
+                                  # so evaluate.py and bake_agent.py follow suit automatically
+                                  # instead of scoring a frozen channel.
+
+opponent_pool:                    # weights, normalised internally; sampled once per game
+  self: 0.50                      #   SELF-PLAY IS NOW HALF THE SYLLABUS - see the block below for
+                                  #   why that is newly worth doing, and what it risks
+  level2Silver2: 0.35             #   the hardest frozen rung - win 0.83 at the warm start. The
+                                  #   anchor that stops a pure mirror drifting somewhere useless
+  level2Silver: 0.10              #   the rank-288 bake. Solved at 0.92, kept thin purely as
+                                  #   anti-forgetting insurance on the one arena-validated agent
+  level2Pro: 0.05                 #   pure builder, guards against forgetting how to build
+                                  #
+                                  # level2ProMax is DELIBERATELY ABSENT: it is HELD OUT, and this
+                                  # run is the first here that holds anything out. It sat in the
+                                  # parent's pool at 0.15 and still lost 14.8% of its score over
+                                  # 500 iterations - the largest movement in that entire table,
+                                  # and downward. It stays in eval_bosses, so it is now the
+                                  # detector: if this run specialises, that column says so, and
+                                  # nothing else can.
+self_play_epsilon: 1.0            # opponent samples like the agent - a fair mirror. Keep this
+                                  # equal to the agent's own action selection.
+
+# WHY SELF-PLAY GOES TO 0.50, WITH THE MEASUREMENT THAT CHANGED THE ANSWER.
+#
+# The standing note in CLAUDE.md says self-play is a poor use of compute: at gae_lambda 0.95 and no
+# win_bonus, self-play games had a mean |return| of 0.08 per decision against 4.34 for level2Pro,
+# so 20% of the games bought 6.7% of the gradient. That measurement is now OBSOLETE. Re-measured on
+# this exact warm start under THIS config's rewards (gamma 0.997, lambda 0.98, win_bonus 5000,
+# margin, 4 games each, single-threaded):
+#
+#     opponent        mean |advantage| per decision      decisions/game
+#     level2Pro                              1.667                 320
+#     self                                   1.196                 265
+#     level2Silver2                          0.911                 250
+#     level2Silver                           0.769                 261
+#     level2ProMax                           0.730                 289
+#
+# win_bonus is what fixed it. A mirror game is the one matchup whose OUTCOME is genuinely in doubt,
+# so the +/-5.0 terminal term is most of its return instead of a rounding error on a blowout. Share
+# of the batch's advantage mass (weight x mean|adv| x decisions, since advantages are normalised
+# once globally over the mixed batch at ppo.py:331):
+#
+#     opponent          weight     share
+#     self                0.50     55.6%
+#     level2Silver2       0.35     28.0%
+#     level2Pro           0.05      9.4%
+#     level2Silver        0.10      7.0%
+#
+# So this really is a self-play run now, and the weights roughly mean what they say for once.
+#
+#   !! WHAT THIS RISKS, AND HOW TO SEE IT. The self opponent is a MIRROR of the current weights -
+#   !! no snapshot, no lag - so it cannot ratchet, and two copies of one policy can happily agree
+#   !! on a degenerate line. The parent run already shows the shape of that failure: against any
+#   !! disrupting opponent it ends with `conn` 0.00 and scores ~4,500, against builders it finishes
+#   !! 90%+ of its connections and scores ~23,000. It has been learning a mutual-inking endgame
+#   !! that only its own descendants play. Half the pool on a mirror can deepen exactly that.
+#   !! The two frozen rungs are the anchor, and HELD-OUT level2ProMax is the alarm. If its margin
+#   !! falls while eval/level2Silver2 rises, this run is specialising, not improving - stop it and
+#   !! put self back to ~0.30.
+#
+#   !! THE REAL FIX IS A SNAPSHOT LEAGUE, AND IT IS NOT A CONFIG CHANGE. Sampling opponents from
+#   !! this run's OWN past checkpoints (rather than only the live weights and two frozen bakes)
+#   !! is what turns self-play from a treadmill into a ladder, and it is the standard answer to
+#   !! "we have no opponent strong enough". It needs a SelfPlayOpponent variant holding a frozen
+#   !! state dict plus a sampler over recent checkpoints - small, but code. Until then, `self` is
+#   !! a mirror and level2Silver/level2Silver2 are a hand-maintained league of two.
+
+reward_mode: margin               # own score gain minus the opponent's, per turn. Both players
+                                  # score on the SAME shared connection, so this also discourages
+                                  # completing a route whose path is mostly the opponent's track.
+win_bonus: 5000.0                 # terminal, in RAW SCORE UNITS: +5000 on a win, -5000 on a loss,
+                                  # 0 on a draw, applied to the final decision only. Divided by
+                                  # score_norm like every other reward, so it lands as +/-5.0.
+                                  # UNCHANGED from the parent, which absorbed it without trouble:
+                                  # explained variance recovered to ~0.91 and stayed there. The
+                                  # scale warning in that config still applies, and a harder
+                                  # opponent means more games whose outcome is genuinely in doubt,
+                                  # which is where this term does its work.
+
+# --- Network (RailroadUNet: 2 down / 2 up, conv before and after, critic off the bottleneck) ---
+base_channels: 64
+value_hidden: 256
+
+# --- PPO ---
+num_iterations: 500               # the parent's remaining 500. Chosen WITH lr below so the anneal
+                                  # continues rather than restarts - see the header table.
+games_per_iteration: 64           # 2 games per worker: enough to smooth stragglers without
+                                  # pickling the ~8.8 MB state dict more often than necessary
+num_workers: 32                   # = nproc on this machine; games_per_iteration is a multiple.
+                                  # If the parent run is still going, these 32 are already taken.
+gamma: 0.997                      # per DECISION (~2.96/turn, measured) => ~0.991 per turn
+gae_lambda: 0.98                  # real-reward horizon is 1/(1-gamma*lambda) ~ 44 decisions
+                                  # (~15 turns); everything past that is delegated to the critic.
+                                  # Unchanged - the parent's explained variance says it is coping.
+action_selection: onpolicy        # behaviour policy == policy, so the PPO ratio is unbiased
+clip_epsilon: 0.2
+ppo_epochs: 2
+minibatch_size: 256
+value_coef: 0.5
+entropy_coef: 0.003               # RAISED 3x from the parent's 0.001. Measured there, entropy fell
+                                  # 1.68 -> 1.47 across 500 iterations, straight through the ~1.5
+                                  # line that config itself flags as going deterministic - and over
+                                  # the same span the run gained 5% on its training opponent and
+                                  # lost 14.8% on level2ProMax. A policy that has stopped exploring
+                                  # cannot find new lines, and with self-play at half the pool it
+                                  # is now BOTH seats that stopped: a mirror of a collapsed policy
+                                  # explores nothing at all. That coupling is why this knob moves
+                                  # in the same run as the self-play weight rather than after it.
+                                  #
+                                  #   !! WATCH ENTROPY FROM ITERATION 1. Target: the decline stops
+                                  #   !! and it holds around 1.5-1.7. Still under 1.5 by iteration
+                                  #   !! 50, go to 0.005. Climbing past ~2.5, it is too high and
+                                  #   !! the policy is being paid to be random, which costs score
+                                  #   !! against every opponent at once.
+                                  #   !! 3x is calibrated on the shape of a slow decline, not
+                                  #   !! measured. This is the line most likely to need a second
+                                  #   !! pass.
+max_grad_norm: 0.5
+lr: 0.000025                      # = the parent's lr at its iteration 500. Continues the schedule
+                                  # instead of re-heating cooled weights; see the header table.
+lr_end: 0.0                       # annealed linearly to ~0 over num_iterations
+score_norm: 1000.0                # per-turn margins are divided by this before GAE
+
+# --- Evaluation (greedy, fixed seeds - the only cross-run comparable number) ---
+eval_episodes: 100
+eval_max_turns: 100
+eval_bosses: level2,level2Pro,level2ProMax,level2Silver,level2Silver2
+# THREE DIFFERENT JOBS IN THIS LIST, and they are not interchangeable:
+#
+#   level2         also HELD OUT (the shipped League 2 boss). A second, blunter detector: it is
+#                  pinned at win 1.00 so only its margin moves, but a margin that falls while the
+#                  contested column rises still means the same thing.
+#   level2ProMax   HELD OUT of the training pool - the PRIMARY detector. First config here that
+#                  keeps anything out, and it exists because the eval table structurally could not
+#                  tell specialisation from improvement while every informative column was also a
+#                  training opponent. It has real dynamic range - it moved -14.8% in the parent -
+#                  where the win-1.00 tiers only wobble by a percent or two.
+#   level2Silver2  the contested column - what to actually pick a checkpoint on.
+#   level2Silver   continuity - keeps every earlier table comparable.
+#
+#   !! HOW TO READ THE PAIR. eval/level2Silver2/margin up AND eval/level2ProMax/margin flat-or-up
+#   !! is the run working. eval/level2Silver2 up while eval/level2ProMax falls is specialisation,
+#   !! and it is worth nothing in the arena - that combination is exactly what the parent run did.
+#
+# Both frozen rungs read FROZEN files under baselines/, so re-baking submission.py during this run
+# cannot move either. Cost: two subprocess opponents at ~1.0s per 100-turn game, so a full table is
+# ~2s/episode slower than a scripted-only one.
+
+# --- Bookkeeping ---
+checkpoint_every: 50              # 10 checkpoints over 500 iterations, each followed by a full
+                                  # eval table. This project's runs peak NARROWLY - one 1000-
+                                  # iteration run's best was iteration 200 and it was gone by 300 -
+                                  # so the cadence exists to capture the peak without having to
+                                  # stop the run by hand.
+checkpoint_dir: checkpoints
+init_checkpoint: checkpoints/20260912-074038_iter500.pt
+log_dir: null
+device: null
+seed: null
