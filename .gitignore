@@ -35,3 +35,8 @@ __pycache__/
 
 # probe training data cached next to a debug bake; regenerable, and large
 *.probe.npz
+
+# Probe caches written next to a run rather than next to a bake (the `--probe-cache` path this
+# repo recommends). Same reasoning as `*.probe.npz` above: ~6 MB each and regenerable in one
+# command, while `runs/` itself is tracked for its tensorboard histories.
+runs/probe_*.npz

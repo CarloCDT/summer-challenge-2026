@@ -92,7 +92,8 @@ a different game than it trained on.
 
 ## Bosses
 
-`BOSS_TIERS = level1, level1Pro, level2, level2Pro, level2ProMax, level2Silver`
+`BOSS_TIERS = level1, level1Pro, level2, level2Pro, level2ProMax, level2Silver, level2Silver2,
+level2Silver3`
 
 - `level1` — always waits (the shipped League 1 boss).
 - `level2` — AUTOPLACE between **two random towns** every turn (the shipped League 2 boss).
@@ -103,6 +104,39 @@ a different game than it trained on.
   protocol (`railroad_env/wire.py`, shared with `test_submission.py`). Deterministic, ~1.0 s per
   100-turn game — on par with level2Pro. It reads a **frozen** copy under `baselines/`, currently
   the one that reached CodinGame rank ~288, and **not** the live `submission.py`.
+
+- `level2Silver2` — **the second frozen rung, added 2026-09-12.** Same machinery, different frozen
+  file: `baselines/20260912-124725-distill_iter50.py`, the bake of the first student distilled with
+  `value_loss_weight` off the `win_bonus` teacher `20260912-074038_iter350`. Added as a new tier
+  rather than by repointing `level2Silver`, which would have retired the rank-288 bake and silently
+  changed the meaning of every number ever measured against that tier. **It carries no arena
+  evidence** — it was never submitted, so it is a harder local bar, not a validated one. Error
+  messages now read `TIER_NAME` off the class, so a failure names the rung that failed.
+
+  Measured against each other, 10 games per seat on the same seeds: the 2026-09-12 bake beats the
+  rank-288 bake **+859, win 0.90**, and the reverse seat gives exactly **−859, win 0.10**. Note
+  both rungs descend from the lineage everything here now trains on, so this is a fixed bar and
+  **not** a held-out generalisation measure.
+
+- `level2Silver3` — **the third rung and the current top of the league, added 2026-09-12.**
+  `baselines/20260912-210537-distill_iter50.py`, the bake of the student distilled from teacher
+  `20260912-155239_iter500` with `value_loss_weight` (critic correlation 0.975). Submitted; no
+  arena result yet.
+
+  **It is the most contested opponent this repo owns**, and that is its real value. 10 games each:
+
+  | seat 0 | opponent | margin | win |
+  |---|---|---|---|
+  | rung 3 | `level2Silver2` | **+103** | **0.70** |
+  | rung 3 | `level2Silver` | +750 | 0.90 |
+  | rung 2 | `level2Silver` | +859 | 0.90 |
+
+  Everything else in the league saturates at 0.90+, so rung 3 against rung 2 is what to use
+  wherever losses are needed — the win-probability fits above especially. Note the ladder is **not
+  a rating**: rung 3 beats rung 2, yet beats rung 1 by *less* than rung 2 does. Non-transitivity,
+  as warned at the top. Note also the scale — those games score 960 to 857, against ~23,000 versus
+  a scripted builder. Two strong disruptors ink each other out, and that mutual-destruction regime
+  is most of what the league measures.
 
 `level2Silver` is deliberately the *file*, not the checkpoint behind it. Loading that checkpoint
 into torch would be a different player: the bake is int4 with BatchNorm folded and reproduces only
@@ -378,6 +412,29 @@ to `<out>.probe.npz`, so re-fitting is free.
 1k run. That reward puts the match outcome directly into the return, so if its features still
 cannot beat the base rate, the bonus did not teach the network anything about winning.
 
+**That test is currently BLOCKED, and the blocker is the frozen bar, not the fit (2026-09-12).**
+Ran on `20260912-124725-distill_iter50` — the first student distilled with `value_loss_weight`,
+off the win_bonus teacher `20260912-074038_iter350`. Its critic is real (value correlation with
+the teacher **0.973**, argmax agreement 0.527 against the shipped student's 0.494), but **both**
+readouts came back starved because that student beats `level2Silver` **0.91**:
+
+| fit | games | base rate | Brier | base-rate Brier |
+|---|---|---|---|---|
+| `--calibrate` on the value head | 60 | 0.913 | 0.0727 | 0.0796 |
+| `--probe`, selected margin+turn | 100 | 0.96 held-out | 0.0396 | 0.0433 |
+
+A probability fit learns from LOSSES, and at a 0.9+ win rate there are almost none — the probe's
+24 held-out games contained about one. So the probe again picking margin+turn over the NN columns
+is **not** evidence the features are uninformative this time; the selection had no power to tell.
+Both runs printed their one-sided warning, which is the guard working.
+
+Nothing in the pool contests this student any more (`level2ProMax` 0.99, `level2Silver` 0.91), so
+this is the "the bar no longer rises on its own" consequence of freezing `level2Silver`, arriving
+in practice. `bake_debug_agent.py --calibrate-opponent-path BAKE.py` now points `level2Silver` at
+any baked file for the fit only, without touching `baselines/` or moving the tier for anything
+else. The obvious contested opponent is a bake of the **teacher**, which is stronger than its own
+student. Redo the win_bonus test that way before concluding anything about the features.
+
 **Do not enlarge that stderr line.** A referee leaves stderr on a pipe it may not drain until the
 process exits (`railroad_env/opponent.py` reads it only on failure). Measured: 7,149 bytes over a
 60-turn game, so a full 100-turn game stays well under a typical 64 KB pipe buffer. Verified by
@@ -405,72 +462,142 @@ straggler smoothing for IPC.
 
 ## Current state — START HERE
 
-*Last checked 2026-09-11 ~16:00. Everything below is verifiable from the repo — re-check it rather
-than trusting it, this section has gone stale before.*
+*Last checked 2026-09-13. Everything below is verifiable from the repo — re-check it rather than
+trusting it, this section has gone stale before.*
 
-**What is shipped right now.** `submission.py` (87,679 chars) is the first **quantization-aware**
-student: `20260911-144318-distill_iter50.pt`, distilled from teacher `20260911-114307_iter200.pt`.
-**The lineage through `114307_iter200` is the one that raised the CodinGame ranking substantially
-— it is the only result in this repo validated from outside our own eval.**
+**What is shipped right now.** `submission.py` (87,348 chars) is the int4 bake of
+`20260912-210537-distill_iter50.pt`, distilled from teacher `20260912-155239_iter500.pt`. It is the
+first **value-distilled** student — `distill.py` now regresses the teacher's value alongside the
+policy KL, so its critic ended at **0.975** correlation with the teacher instead of keeping its
+random initialisation, and argmax agreement finished at **0.531** (the previous shipped student
+managed 0.494, so the critic cost the policy nothing). Verified byte-identical to a re-bake of that
+checkpoint. Submitted 2026-09-12; **the arena result is not in yet.**
 
-**The last PPO run, `runs/20260911-114307` (`ppo_28ch_vs_silver.yaml`), finished all 300
-iterations and is healthy throughout.** Explained variance 0.94 → **0.98**, `clip_frac` 0.29 →
-0.025, `approx_kl` 0.027 → 0.003, self-play margin 2010 → 3951 (win 0.86), entropy 2.79 → 1.73.
-Crucially **no cross-boss degradation**: level1/level1Pro/level2/level2Pro sit at win 1.00 on every
-checkpoint. The opponent pool fixed the failure that halved every other boss in earlier runs.
+Until it is, `114307_iter200` remains the only lineage in this repo validated from outside our own
+eval table. Nothing below changes that.
 
-**Candidate teachers, measured against `level2Silver`** — at the time, the live `submission.py`;
-those are the same bytes now frozen under `baselines/`, so these rows stay comparable:
+**The league is now three rungs** (`level2Silver`, `level2Silver2`, `level2Silver3` — see the boss
+list). Every shipped bake gets frozen under `baselines/` and added rather than swapped in, so no
+past number changes meaning. Measured 10 games each:
 
-| checkpoint | level2ProMax | level2Silver | note |
+| seat 0 | opponent | margin | win |
 |---|---|---|---|
-| `114307_iter200` | +4164 win 1.00 | +285 win 0.68 | **arena-validated** (25 games) |
-| `114307_iter250` | +3645 win 1.00 | +565 win 0.74 | 100 games |
-| `114307_iter300` | +4692 win 1.00 | +558 win 0.71 | 100 games |
+| rung 3 | `level2Silver2` | +103 | **0.70** |
+| rung 3 | `level2Silver` | +750 | 0.90 |
+| rung 2 | `level2Silver` | +859 | 0.90 |
 
-iter250 and iter300 are indistinguishable (SE ≈ 0.044). iter200 looks *worse* on this table yet is
-the one that actually moved the rank — which is the whole lesson of the "our eval does not predict
-rank" warning above. Do not pick a teacher on this table alone.
+Rung 3 against rung 2 is **the only non-saturated matchup this repo owns**, so it is what to point
+any fit that needs losses at — the win-probability work above especially. The ladder is not a
+rating: rung 3 beats rung 2 yet beats rung 1 by *less* than rung 2 does.
 
-The bake this lineage produced is now frozen in `baselines/` and is what the `level2Silver` boss
-plays as (changed 2026-09-11), so every eval table from here carries a column against the agent
-that actually ranked, and a re-bake no longer moves it.
+**Three PPO runs on 2026-09-12, and what each one taught.**
 
-**Unfinished measurement, worth redoing first.** A three-way head-to-head between the iter200 /
-iter250 / iter300 teachers was running when the session ended and did not complete. Head-to-head
-is the sharper instrument; the command is now a real tool:
+| run | config | iters | verdict |
+|---|---|---|---|
+| `20260912-074038` | `ppo_28ch_vs_silver_1k.yaml` | 552 | mechanically healthy, **specialised** |
+| `20260912-155239` | — | 500 | produced the shipped teacher; ended with `clip_frac` 0.001 |
+| `20260912-222648` | `ppo_28ch_vs_silver3.yaml` (first version) | 914 | **inert — no progress at all** |
 
-```
-python3 compare_agents.py i200=checkpoints/20260911-114307_iter200.pt \
-    i250=checkpoints/20260911-114307_iter250.pt \
-    i300=checkpoints/20260911-114307_iter300.pt --episodes 25 --workers 8
-```
+`074038` is the clean demonstration of pool overfitting. Over 500 iterations it gained **+5.0%**
+against `level2Silver` (its 0.40-weight training opponent) and lost **−14.8%** against
+`level2ProMax`, with `level1`/`level1Pro`/`level2` — none of them in the pool — flat to −1.6%. Every
+optimiser metric looked fine throughout (clip_frac 0.22 → 0.10, EV 0.91). **Health metrics cannot
+see specialisation; only a held-out column can.**
+
+`222648` is the more expensive lesson: **a run can be perfectly stable and still do nothing.** 914
+iterations moved every eval column by less than its noise band — against `level2Silver3` it went
+0.61 → 0.65 win with a dip to 0.46, at SE ≈ 0.05. Three causes, in order of size:
+
+- **`lr` too cold, and annealed to zero.** 2.5e-5 was derived to continue a *different* run's tail
+  over 500 iterations; reused on 1000 from another checkpoint it is simply small. `clip_frac` ran
+  0.162 → **0.040** and `approx_kl` → 0.003 (healthy 0.05–0.2), i.e. the policy barely moved. With
+  `lr_end: 0` the back third was at 2.5e-6 and could not have moved. **Set `lr_end` to ~20% of
+  peak** — a run still training at the end costs nothing when checkpoints are picked from a table.
+- **γ 0.998 with λ 0.99 made the gradient noisier.** γ 0.998 is a 500-decision discount horizon on
+  a ~225-decision game, i.e. effectively undiscounted, so the critic must call the whole game from
+  the opening. Isolated on identical games: advantage std **1.048 → 1.527 (+46%)** for +89% horizon,
+  and EV fell 0.87 → 0.77 with value loss doubling and still climbing at iteration 900. Noisier
+  gradients plus a smaller step is the one combination guaranteed to go nowhere.
+- **No held-out column.** `eval_bosses` was the three rungs, all three in the training pool, so the
+  table structurally could not tell "improving" from "specialising".
+
+**`ppo_28ch_vs_silver3.yaml` is the fixed retry and has NOT been launched.** `lr` 5e-5, `lr_end`
+1e-5, γ 0.997, λ 0.98, and — the part worth copying — **`level2Silver2` is held out of the pool
+while staying in `eval_bosses`.** That gets a genuine generalisation column without adding a
+trivial boss: it sits near win 0.85, so it has range, and it is never trained against. Read it
+against `level2Silver3`: both rising is the run working, `level2Silver3` rising while
+`level2Silver2` is flat is `074038` happening again.
+
+`ppo_28ch_vs_silver2.yaml` was written, validated and never launched; it is the same shape one rung
+down and is kept for its measurement notes.
+
+**`win_bonus` changed which opponents matter, and the old numbers are wrong.** Advantage magnitude
+across the pool now spreads **2.3x**, not 12.9x, and self-play went from 6.7% of the gradient to
+**35.9% at 0.30 weight** — a mirror game is the one matchup whose outcome is in doubt, so the ±5.0
+terminal term is most of its return. Self-play is a real use of compute now; see the
+per-opponent-normalisation backlog item for the table.
 
 **Suggested next steps, in order.**
-1. Run the head-to-head above; pick the teacher, distill it (`distill.yaml` already has
-   `quant_aware: int4` and its own opponent pool), bake, and compare the new student against
-   `submission.py` with `compare_agents.py` before submitting.
-2. Build the **league + held-out eval** (see the backlog below). This targets the only problem
-   currently costing anything: our eval not predicting rank.
-3. Then the deferred reward/GAE experiments.
+1. Launch `ppo_28ch_vs_silver3.yaml`. Watch `clip_frac` stays in 0.05–0.2 and read
+   `eval/level2Silver2` (held out) against `eval/level2Silver3` (contested) at every checkpoint.
+2. Get the arena result for the current submission. Two of the last three runs produced agents our
+   table liked; only the ladder can say whether any of it transferred.
+3. **Snapshot league** — sample opponents from the run's *own* past checkpoints, not just the live
+   weights and three hand-frozen bakes. It is the standard answer to "no opponent is strong enough"
+   and it is what turns self-play from a treadmill into a ladder. Needs a `SelfPlayOpponent` variant
+   holding a frozen state dict plus a sampler; small, but code.
+4. Re-fit the win-probability probe on a `win_bonus` teacher against **rung 3 vs rung 2** — the
+   contested matchup finally makes that test possible (see the debug-agent section).
 
 **Backlog, deferred by decision, roughly in priority order:**
 - **League**: sample training opponents from a *population* of past bakes rather than only the
   latest, so the agent cannot specialise against one style. `BakedSubmissionOpponent` already takes
   a `submission_path`, so `level2Silver` is a league of size one that we keep overwriting.
   Half done as of 2026-09-11: `baselines/` is where the population lives and `level2Silver` reads a
-  frozen member of it rather than whatever was baked last, so the pool is at least *stable*. It is
-  still a league of **one** — a second rung is a copied file plus a subclass pinning its own
-  `DEFAULT_PATH`. Note none of it is held out: the frozen bake's teacher is the ancestor of
-  everything we now train, so it measures progress against a fixed bar, not generalisation.
-- **Distil the value head too.** `distill.py`'s loss is KL on the policy logits alone, so the
-  student's value head never receives a gradient and keeps its random initialisation. Measured on
-  `144318-distill_iter50` over 652 states, that is less useless than it sounds — the student's
-  value still tracks the teacher's at **+0.87** correlation, because the *features* were distilled
-  even though the head was not (an untrained net's value is essentially constant, std 0.0001,
-  against the student's 0.056). But the scale is ~80x off, so it is only usable after a fit. A
-  value-MSE term against the teacher would cost almost nothing and make the student's critic real,
-  which matters more now that `win_bonus` puts outcome information into the teacher's value.
+  frozen member of it rather than whatever was baked last, so the pool is at least *stable*.
+  **A second and third rung landed 2026-09-12** (`level2Silver2`, `level2Silver3`, see the boss
+  list above), so the league is now size three and the mechanism is proven — each further rung is a
+  copied file plus a subclass. Rung 3 vs rung 2 is contested at 0.70, the first matchup here that
+  is not saturated.
+  What remains is sampling training opponents from the population rather than naming one, which is
+  an `opponent_pool` edit, not new machinery. Note none of it is held out: every rung descends from
+  the ancestor of everything we now train, so it measures progress against a fixed bar, not
+  generalisation. Two rungs also mean any eval that does not pin `eval_bosses` now costs roughly
+  two extra seconds per episode.
+- ~~**Distil the value head too**~~ — BUILT 2026-09-12. `distill.py` now takes
+  `value_loss_weight` (default 0, so nothing existing changes) and regresses the teacher's value
+  alongside the policy KL, once per **unique state** rather than once per decision — the value does
+  not move between a turn's sub-decisions, so weighting by decision count would only over-sample
+  early turns. `distill.yaml` sets **0.25**. It is **free in submission size**: `bake_agent.py`
+  drops the critic, and baking the same net at `value_hidden` 128 and 32 gives 101,233 against
+  101,213 characters, a 20-character difference that is compression noise on the conv blob.
+
+  **Use Huber, not MSE — the target's scale swings between iterations.** The opponent is sampled
+  per game, so `distill/teacher_value_var` came out **3.6 / 6.3 / 23.6** over three consecutive
+  iterations. Under plain MSE the unlucky iteration hands the *shared trunk* a ~6x larger gradient
+  and drags the policy with it: at weight 0.25 the policy KL spiked to **4.60** against the **1.75**
+  a `value_loss_weight: 0` baseline showed on the same seed and iteration. `value_huber: 2.0` fixes
+  it. `distill/value_mse` is logged as a true MSE either way, so it stays comparable across runs.
+
+  Paired 6-iteration A/B, same seed and therefore the same states (`value_loss_weight` 0.25 with
+  Huber against 0):
+
+  | iter | agree on/off | value MSE on/off | value corr on/off |
+  |---|---|---|---|
+  | 0 | 0.278 / 0.296 | 0.52 / 7.6 | +0.990 / −0.392 |
+  | 2 | 0.387 / 0.398 | 1.84 / 56.2 | +0.997 / +0.653 |
+  | 4 | 0.503 / 0.522 | 0.57 / 16.7 | +0.989 / +0.259 |
+  | 5 | 0.303 / 0.301 | 1.31 / 7.3 | +0.907 / −0.148 |
+
+  So the critic goes from noise to a **+0.99** correlation with the teacher for about **0.017** of
+  argmax agreement. Iteration 5 collapsed to 0.30 in **both** arms, which is the read to copy: a
+  wobble that appears in the baseline on the same seed is the run, not the value term. `distill/argmax_agreement` is the guard — the policy is what ships, so if a
+  real run comes in below the **0.494** the shipped run reached, the trunk is being pulled and the
+  weight is too high. `distill/value_corr` is the payoff. Two things downstream should change and
+  are worth checking: `bake_debug_agent.py --calibrate` stops being a fiction, and the `--probe`
+  column selection may finally pick the NN features over margin-and-turn — which would be the
+  cleanest evidence the term did its job. A PPO fine-tune from these weights also stops spending
+  its first iterations re-fitting a random critic.
 - **Held-out eval**: keep 2–3 opponents *out* of the training pool. Right now `eval_bosses` and the
   training pool are nearly the same set, so the table structurally cannot detect pool overfitting.
 - ~~**Terminal win bonus**~~ — BUILT 2026-09-11. `win_bonus` (raw score units, `+win_bonus` on a
@@ -500,6 +627,25 @@ python3 compare_agents.py i200=checkpoints/20260911-114307_iter200.pt \
   of the compute. The weights do not do what the config comment says they do. A log-ratio reward
   was analysed and **rejected**: the smoothing constant is a dial between "shut-outs explode"
   (spread 35x) and "literally margin/c", with a best case of 11.0x against margin's 12.9x.
+
+  **`win_bonus` largely fixed this, and the self-play row above is now obsolete (measured
+  2026-09-12).** Re-run on `074038_iter500` under γ=0.997, λ=0.98, `win_bonus` 5000, `margin`,
+  4 games per opponent:
+
+  | opponent | mean abs advantage / decision | decisions/game |
+  |---|---|---|
+  | level2Pro | 1.667 | 320 |
+  | **self** | **1.196** | 265 |
+  | level2Silver2 | 0.911 | 250 |
+  | level2Silver | 0.769 | 261 |
+  | level2ProMax | 0.730 | 289 |
+
+  The spread is **2.3x**, not 12.9x. A mirror game is the one matchup whose *outcome* is genuinely
+  in doubt, so the ±5.0 terminal term is most of its return rather than a rounding error on a
+  blowout — self-play went from 6.7% of the advantage mass to **35.9% at 0.30 weight**. Two
+  consequences: self-play is now a real use of compute rather than a documented waste, and pool
+  weights approximately mean what they say under this reward. Per-opponent normalisation is
+  correspondingly less urgent than the 12.9x figure implies.
 - `gae_lambda` 0.95 → 0.98 (roughly triples the real-reward horizon; costs variance).
 - Potential-based shaping on the scoring-rate derivative — policy-invariant so it is safe, but its
   upside shrank once EV reached 0.98.
@@ -523,19 +669,35 @@ in the `ppo_28ch_*` configs, which means the turn channel spans only 0.00–`max
 training against 1.00 at eval; see the level2ProMax post-mortem above for what that cost.
 
 **Checkpoints that matter:** `checkpoints/20260910-224257_iter200.pt` — the original +2367-on-
-level2ProMax peak that every later lineage descends from — and `20260911-114307_iter200.pt`, the
-current teacher. Do not let either get swept up in a cleanup. The same goes for
-`baselines/20260911-144318-distill_iter50_rank288.py`, which is not a checkpoint but **is** the
-`level2Silver` boss — deleting it breaks every eval that names that tier.
+level2ProMax peak that every later lineage descends from — `20260911-114307_iter200.pt`, the
+arena-validated teacher, and `20260912-155239_iter500.pt`, the teacher behind what is shipped now.
+Do not let any of them get swept up in a cleanup.
+
+The same goes for all three files in `baselines/`, which are not checkpoints but **are** the
+`level2Silver` / `level2Silver2` / `level2Silver3` bosses — deleting one breaks every eval that
+names that tier, and unlike a checkpoint it cannot be re-baked into the same bytes unless the
+matching `.pt` still exists.
 
 **Ladder of configs**, each warm-starting from the last:
 `ppo_28ch_level1Pro.yaml` (cold start) → `ppo_28ch_level2Pro.yaml` → `ppo_28ch_level2ProMax.yaml`
 → `ppo_28ch_mixed_selfplay.yaml` (opponent pool + self-play) → `ppo_28ch_vs_silver.yaml` (adds
-`level2Silver`) → `distill.yaml` (`quant_aware: int4`, its own opponent pool).
+`level2Silver`) → `ppo_28ch_vs_silver_1k.yaml` (1000 iterations, `gae_lambda` 0.98, `win_bonus`
+5000) → `ppo_28ch_vs_silver2.yaml` → `distill.yaml` (`quant_aware: int4`, its own opponent pool).
 
-**`submission.py`**: baked 2026-09-11 15:06 from `20260911-144318-distill_iter50.pt` — the first
-**quantization-aware** student — at 87,679 characters. `force_disrupt` is recorded in that
-checkpoint, so the bake drops the SKIP_DISRUPT branch automatically.
+`ppo_28ch_vs_silver2.yaml` (added 2026-09-12) forks `runs/20260912-074038` at its `_iter500` and
+swaps the pool's 0.40 slot from `level2Silver` to `level2Silver2`, because the old rung is solved:
+the warm start beats it **0.92** (12 games) against **0.83** for the new one, and the parent run's
+own 100-game column reached +1168 win 0.90. It also continues rather than restarts the anneal —
+`lr` 2.5e-5 over 500 iterations is exactly the parent's tail, since `decay_progress` runs over the
+full count. Both rungs stay in `eval_bosses`: the old one keeps every earlier table comparable, the
+new one is the column to pick a checkpoint on. Nothing here is held out — `level2Silver2` is the
+distillation of this run's own teacher `074038_iter350`, so it is a fixed bar, not generalisation.
+
+**`submission.py`**: baked 2026-09-12 from `20260912-210537-distill_iter50.pt` — the first
+**value-distilled** student — at 87,348 characters, int4, quantization-aware. `force_disrupt` is
+recorded in that checkpoint, so the bake drops the SKIP_DISRUPT branch automatically. It is frozen
+byte-for-byte at `baselines/20260912-210537-distill_iter50.py` and is what `level2Silver3` plays
+as, so re-baking `submission.py` does not move that tier.
 
 **Re-baking `submission.py` is now safe for training and eval**, which it was not before
 2026-09-11. `level2Silver` reads a frozen copy under `baselines/`, so overwriting `submission.py`
@@ -551,7 +713,7 @@ own-first, the referee does no mirroring, turns are simultaneous, and a same-cel
 resolves to neutral for both. Note `test_submission.py` hardcodes `my_id = 0`, so nothing in the
 repo exercises the player-1 path by default.
 
-**`checkpoints/` holds 123 files, 2.1 GB, and is mixed** — 88 are 25-channel and therefore invalid
+**`checkpoints/` holds 168 files, 3.0 GB as of 2026-09-13, and is mixed** — 88 are 25-channel and therefore invalid
 against the current environment (also semantically stale on channels 5/6/8/9 and 10–21); 34 are
 28-channel, and one legacy file declares neither. Check `model_kwargs["in_channels"]` before
 loading anything. Ask before deleting.
