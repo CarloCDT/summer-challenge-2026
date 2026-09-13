@@ -45,11 +45,31 @@
 # and after are scored against DIFFERENT opponents - iter200 shows +1667 against the old bake and
 # +285 against the new one. The tier is frozen now, so tables from here are comparable, but always
 # re-measure old candidates against it (evaluate_checkpoints.py) before trusting a comparison.
-teacher_checkpoint: checkpoints/20260911-114307_iter200.pt
+teacher_checkpoint: checkpoints/20260912-155239_iter500.pt
 
 # --- Student ---
 channels: [34, 34, 36]
-value_hidden: 128                 # training-only; bake_agent.py drops the critic entirely
+value_hidden: 128                 # training-only; bake_agent.py drops the critic entirely, so
+                                  # this costs NOTHING in submission.py. Verified by baking the
+                                  # same net at value_hidden 128 and 32: the two submissions come
+                                  # out 101,233 and 101,213 characters, a 20-character difference
+                                  # that is compression noise on the conv blob, not the critic.
+                                  #
+                                  # It DOES set the size of `bake_debug_agent.py --calibrate`,
+                                  # which keeps the critic. Untrained worst case at (34,34,36),
+                                  # and the trained estimate at the 0.887 ratio the shipped bake
+                                  # actually achieved:
+                                  #
+                                  #   value_hidden   params   worst case   trained est.
+                                  #        128       27,905     121,815      ~108,000  over cap
+                                  #         64       13,953     112,652      ~100,000  marginal
+                                  #         48       10,465     110,357       ~98,000
+                                  #         32        6,977     108,082       ~96,000
+                                  #
+                                  # Only reduce it if you want a debug bake with a REAL critic
+                                  # inside the arena's 100,000-character cap. For local debugging
+                                  # there is no cap, and for the arena `--probe` is the better
+                                  # route anyway at ~91k with the policy left byte-identical.
 
 quant_aware: int4                 # train the student AS an int4 net: every forward pass uses
                                   # per-output-channel rounded conv weights, gradients update the
@@ -100,13 +120,45 @@ lr: 0.001
 lr_end: 0.00001
 max_grad_norm: 1.0
 
+# Distil the CRITIC as well as the policy: MSE against the teacher's value, once per unique state.
+#
+# Why it was missing and why it matters. The loss used to be KL on the policy logits alone, so the
+# student's value head never received a single gradient and shipped with its random initialisation.
+# That is what made `bake_debug_agent.py` print a P(win) that sat at 0.53 all game. It also costs a
+# future PPO fine-tune real iterations, since a warm start with a random critic spends them
+# re-fitting one before the advantages mean anything.
+#
+# It is free in submission size - bake_agent.py drops the critic - so the only price is that the
+# term shares the trunk with the policy.
+#
+# Choosing the weight, from measured scales rather than by guess. The teacher's value over 261
+# states has mean 1.58 and std 1.41, so a fresh critic starts at MSE ~4.5 and one that has learnt
+# only the mean sits at ~2.0. Policy KL in the shipped run ran 1.14 -> 0.57. At 0.25 the two terms
+# start within a factor of ~2 of each other and the value term shrinks fastest.
+#
+# WHAT TO WATCH. `distill/argmax_agreement` is the guard - the policy is what ships, so if it comes
+# in below the 0.494 the shipped run reached, the trunk is being pulled and the weight is too high.
+# `distill/value_corr` is the payoff: it is the student's value against the teacher's over the whole
+# iteration, and it is the number that says whether the critic became real.
+value_loss_weight: 0.25
+
+# Huber delta for that term (null = plain MSE). This is not a default worth changing casually.
+# The teacher's value is unbounded and its SCALE swings with the opponent sampled for each game -
+# measured over three consecutive smoke iterations, `distill/teacher_value_var` came out 3.6, 6.3
+# and 23.6. Under plain MSE the unlucky iteration hands the shared trunk a ~6x larger gradient,
+# and in an A/B at value_loss_weight 0.25 the policy KL spiked to 4.60 against the 1.75 the
+# value_loss_weight=0 baseline showed on the same seed and the same iteration. Huber bounds each
+# state's contribution, so an iteration full of blowout games cannot drag the policy with it.
+# `distill/value_mse` is logged as a true MSE either way, so the number stays comparable.
+value_huber: 2.0
+
 # --- Evaluation ---
 # argmax agreement with the teacher is the capacity read-out: high agreement means the student
 # can represent the teacher's policy, low agreement means (36,36,40) is too small. The boss table
 # is the ground truth - agreement is a proxy, score is the thing that matters.
 eval_every: 25
 eval_episodes: 100
-eval_bosses: level1,level1Pro,level2,level2Pro,level2ProMax,level2Silver
+eval_bosses: level2,level2Pro,level2ProMax,level2Silver, level2Silver2, level2Silver3
 # level2Silver is the only opponent that is actually contested (the PPO teacher wins 1.00 against
 # every other tier), so without it this table cannot tell two students apart. It now reads a
 # FROZEN bake under baselines/ (the rank-288 one) rather than the live submission.py, so a
