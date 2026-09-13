@@ -204,7 +204,7 @@ base_channels: 64
 value_hidden: 256
 
 # --- PPO ---
-num_iterations: 1000              # kept at 1000, but it now MEANS something: with lr_end above
+num_iterations: 200              # kept at 1000, but it now MEANS something: with lr_end above
                                   # zero the last third is still training instead of coasting.
                                   # Runs here peak narrowly, so read every checkpoint table and
                                   # stop on the conditions below rather than planning for 1000.
@@ -325,7 +325,7 @@ checkpoint_every: 50              # 10 checkpoints over 500 iterations, each fol
                                   # so the cadence exists to capture the peak without having to
                                   # stop the run by hand.
 checkpoint_dir: checkpoints
-init_checkpoint: checkpoints/20260912-155239_iter500.pt
+init_checkpoint: checkpoints/20260913-065817_iter200.pt
 log_dir: null
 device: null
 seed: null

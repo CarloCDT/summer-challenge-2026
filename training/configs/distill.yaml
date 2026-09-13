@@ -45,7 +45,7 @@
 # and after are scored against DIFFERENT opponents - iter200 shows +1667 against the old bake and
 # +285 against the new one. The tier is frozen now, so tables from here are comparable, but always
 # re-measure old candidates against it (evaluate_checkpoints.py) before trusting a comparison.
-teacher_checkpoint: checkpoints/20260912-155239_iter500.pt
+teacher_checkpoint: checkpoints/20260913-065817_iter200.pt
 
 # --- Student ---
 channels: [34, 34, 36]

@@ -1,0 +1,298 @@
+# PPO from checkpoints/20260913-065817_iter200.pt - the best agent so far. 200 iterations, vs level2Silver4.
+#
+# THIS FILE IS THE 200-ITERATION RUN THAT WORKED, EXTENDED, WITH TWO KNOBS MOVED. Everything that
+# has been measured to matter stays exactly where it is. Read the two blocks below before changing
+# anything: several of these values look arbitrary and are not.
+#
+#   !! WHAT MOVES relative to ppo_28ch_vs_silver3.yaml:
+#   !!   num_iterations   200   (REVERTED from 500 on 2026-09-13 - see the 164104 block)
+#   !!   ppo_epochs       2     (REVERTED from 3 on 2026-09-13 - see the 164104 block)
+#   !!   entropy_coef     0.003 -> 0.001  (0.002 ALSO overshoots over a long run - see below)
+#   !!   init_checkpoint  ...   -> 20260913-065817_iter200.pt
+#   !! Unchanged and NOT up for discussion without new evidence: gamma 0.997, gae_lambda 0.98,
+#   !! lr 5e-5 with lr_end 1e-5, win_bonus 5000.
+#   !!   opponent         pool -> level2Silver4 ONLY (2026-09-13, by decision - see the Environment block)
+#
+# ============================================================================================
+# WHY THE WARM START IS THIS CHECKPOINT
+# ============================================================================================
+# runs/20260913-065817 (200 iterations) is the first run in this project that improved WITHOUT
+# paying for it somewhere else. Its own 100-game tables:
+#
+#     checkpoint            50      100      150      200
+#     level2Silver3 (pool)  +39/0.60 +60/0.67 +75/0.62 +90/0.70   <- monotone on margin
+#     level2Silver2 (HELD)  +390/0.87 +300/0.85 +376/0.88 +372/0.91
+#     level2Silver          +1184/0.98 +1132/0.93 +1122/0.99 +1094/0.97
+#
+# The contested column rises monotonically and the HELD-OUT column drifts up rather than down.
+#
+# HISTORICAL - the multi-opponent pool this config used before 2026-09-13 was chosen on this
+# measurement of THAT checkpoint, 60 greedy games each. The pool has since been removed:
+#
+#     opponent        win    conn    verdict
+#     level2Silver3   0.73    0.00   the only opponent still in doubt        -> pool 0.40
+#     level2Silver2   0.88    0.00   range in both margin and win           -> HELD OUT
+#     level2Silver    0.95    0.00   solved                                 -> pool 0.05
+#     level2ProMax    1.00    0.01   saturated, teaches nothing             -> excluded entirely
+#     level2Pro       1.00    0.90   saturated BUT the only non-inking game -> pool 0.05
+#
+# Read the conn column: against every disrupting opponent the agent ends with ZERO connections
+# surviving, and against the pure builder it finishes 90% of them. Those are two different games,
+# and 95% of this pool is the first one. The level2Pro slice is the only thing keeping the second
+# in the syllabus, which is why it stays despite being won 1.00 - and why it is worth more than its
+# weight suggests (largest mean |advantage| of any opponent, ~9% of the gradient at 0.05).
+# Compare 20260912-074038, which gained 5.0% on its 0.40-weight training opponent and lost 14.8%
+# on the boss it never trained against, while every optimiser metric looked fine. Health metrics
+# cannot see specialisation; only the held-out column can, which is why it is in eval_bosses.
+#
+# ============================================================================================
+# WHAT THE FIRST ATTEMPT AT THIS CONFIG (runs/20260913-130019) ESTABLISHED
+# ============================================================================================
+# Same warm start, same pool, ppo_epochs 3, entropy_coef 0.002. It peaked at iteration 100 and
+# then decayed for 190 iterations on EVERY column at once - not specialisation, straight decline:
+#
+#     iteration              50     100     150     200     250
+#     level2Silver3 win    0.65    0.71    0.60    0.47    0.47   <- ends LOSING to the rung
+#     level2Silver2 win    0.93    0.85    0.82    0.77    0.74   <- monotone down
+#     level2Silver  win    0.99    0.96    0.90    0.92    0.90
+#
+# Nothing it produced beat its own warm start, so 065817_iter200 is still the best agent.
+#
+#   !! THE OPTIMISER WAS PERFECT THROUGHOUT. explained_variance 0.86 -> 0.89, value_loss flat at
+#   !! ~0.21, clip_frac 0.23 -> 0.16, approx_kl 0.023 -> 0.015. Every health metric in band, every
+#   !! iteration, while the policy got steadily worse at everything. Health metrics say the
+#   !! OPTIMISER is working, never that the run is learning. Only the eval table says that.
+#
+# The two things that did move with the decline were train/entropy (1.58 -> 2.22, monotone) and
+# self_play/win_rate (0.575 -> 0.457, monotone). Both are now at the top of the stop list.
+#
+#   !! DO NOT WARM START FROM runs/20260913-100010. That run chained another 200 iterations from
+#   !! THIS checkpoint and went BACKWARDS: level2Silver3 0.71 -> 0.64, level2Silver2 0.87 -> 0.85.
+#   !! Its entropy is why - see the entropy_coef block. iter200 of 065817 is the high-water mark.
+#
+# ============================================================================================
+# WHAT ONE LONG RUN CHANGES BESIDES LENGTH
+# ============================================================================================
+# You have been chaining 200-iteration runs. Two costs disappear here and one appears.
+#
+# GONE: the optimizer reset. train_ppo builds a FRESH Adam on every launch - checkpoints do store
+# `optimizer_state_dict`, but `init_checkpoint` deliberately loads weights only (train_ppo.py:114).
+# Chaining in 200s pays the cold-moment cost far more often than one 500 does. (Making the warm start
+# optionally resume the optimizer is a small code change and is the obvious next improvement to
+# the trainer itself; it is not something this config can do.)
+#
+# GONE: the re-anneal. lr restarted at 5e-5 every chunk and cooled to 1e-5 within it.
+#
+# NEW RISK: lr now stays near 5e-5 for far longer. In the 200-iteration run clip_frac fell 0.26 ->
+# 0.05 mostly BECAUSE of the fast anneal, not because the gradient dried up (the next chunk
+# restarted at 0.27, which proves it). [HISTORICAL - written for the 500-iteration version.] Over 500 iterations clip_frac sat high for hundreds of
+# iterations instead of tens. That is the reason ppo_epochs goes to 3 and not 4 - see below.
+#
+# ============================================================================================
+# STOP CONDITIONS - read every checkpoint table, do not wait for the last iteration
+# ============================================================================================
+#   !! - train/entropy above 1.9. STOP. Do not wait for the eval table to agree - see the
+#   !!   entropy_coef block. This is first in the list because it was last time too, as a soft
+#   !!   warning, and got talked past at a cost of 190 iterations.
+#   !! - self_play/win_rate trending DOWN. Without a pool it records the games vs level2Silver4,
+#   !!   so a decline means losing ground against the training opponent itself. Run 164104: 0.43 -> 0.31.
+#   !! - eval/level2Silver4 (the training opponent) rising while eval/level2Silver3 (held out) is
+#   !!   flat or falling = SPECIALISING against one frozen file. Worth nothing in the arena.
+#   !! - train/clip_frac above ~0.25 and staying there = the step is too large at this lr.
+#   !!   Healthy 0.05-0.2. 065817 opened at 0.26 with 2 epochs and settled into 0.10-0.20.
+#   !! - train/approx_kl above ~0.03 sustained = same cause, and the sharper signal of the two.
+#   !! - train/entropy under 1.4 and falling. The opposite failure; raise entropy_coef.
+#   !! PICK THE CHECKPOINT FROM THE EVAL TABLE, NEVER THE LAST ONE. 4 are written here.
+#
+# ============================================================================================
+# WHY THIS IS BACK TO 2 EPOCHS AND 200 ITERATIONS (run 20260913-164104, killed at ~122)
+# ============================================================================================
+# The single-opponent version of this config (silver4 only, 3 epochs, 500 iterations, entropy
+# 0.001) failed the same way 130019 did, despite entropy_coef having been HALVED:
+#
+#     signal                               start        at ~120
+#     train/entropy (raw)                   1.57        2.0-2.25, first above 1.9 at iter 46
+#     self_play/win_rate (games vs silver4) 0.43        0.31
+#     self_play/score_margin                 -65        -347
+#     eval level2Silver4 win                0.47 @50    0.45 @100
+#     eval level2Silver3 win (held out)     0.67 @50    0.59 @100
+#
+# It got worse against the ONE opponent it trained on, with clip_frac 0.20, approx_kl 0.02, EV 0.83
+# all healthy. Halving the bonus did not slow the entropy climb, so the BONUS IS NOT THE DRIVER:
+# the policy-gradient updates themselves are flattening the policy. The leading hypothesis is noise.
+# Against a near-mirror the per-turn margin is ~0.001 after score_norm, so the return is almost
+# entirely the one-bit win_bonus, the advantages are mostly sign noise, and 3 epochs at an lr held
+# near peak for hundreds of iterations integrate that noise into a random walk.
+#
+# The only run in this lineage that improved (065817) used 2 epochs and a 200-iteration fast anneal.
+# Both attempts to extend it used 3 epochs and a long schedule, and both failed identically while
+# differing in pool and entropy_coef. So this run tests the remaining shared factor: epochs and
+# schedule back to 065817's, opponent and entropy_coef left as they were.
+#
+#   !! HOW TO READ THE RESULT. Entropy holds under ~1.9 and silver4/silver3 hold or rise: epochs
+#   !! and schedule were the cause. Entropy still climbs: the single near-mirror opponent is, and
+#   !! no optimiser setting will fix a one-bit reward - that points at reward shaping, not tuning.
+#
+# Run: python3 -u -m training.train_ppo --config training/configs/ppo_28ch_vs_silver3_1k.yaml
+
+# --- Environment ---
+grid_height: null                 # null = the authentic random size (h 14..20, w = round(h*1.5))
+max_turns: 100                    # the PRODUCTION horizon - training and eval agree. Do not
+                                  # shorten: an earlier run trained at 50 against a 100-turn eval
+                                  # and under-priced a large inkable footprint by ~3x.
+opponent_strategy: level2Silver4  # THE ONLY TRAINING OPPONENT - there is no opponent_pool. See
+                                  # the block below for what this gives up.
+allow_skip_disrupt: true          # keeps the 3-channel head so the warm start loads
+force_disrupt: true               # ...but never offers SKIP_DISRUPT. Recorded in the checkpoint,
+                                  # so evaluate.py and bake_agent.py follow suit automatically
+                                  # instead of scoring a frozen channel.
+
+# NO opponent_pool, by decision (2026-09-13). Every game is against level2Silver4, the frozen bake
+# of 20260913-113208-distill_iter50 - whose teacher is this run's own warm start, 065817_iter200.
+#
+#   !! WHAT THIS GIVES UP, so it is a known trade and not a surprise later:
+#   !! - SELF-PLAY IS GONE. No mirror games, so no mirror games - but NOTE self_play/* scalars ARE still
+#   !!   logged: they record the training games against level2Silver4, and self_play/win_rate is
+#   !!   still the early warning (it showed 0.43 -> 0.31 in run 164104).
+#   !! - ONE FROZEN OPPONENT IS THE WHOLE SYLLABUS. This is the configuration most prone to
+#   !!   specialisation: 074038 put 0.40 on a single rung and gained 5% against it while losing
+#   !!   14.8% on an opponent it did not train against. At 1.00 weight that risk is larger.
+#   !! - No builder slice, so nothing keeps the non-inking game in the curriculum.
+#   !! The mitigation is the eval list: EVERY other rung is now held out, so specialisation shows
+#   !! up directly as level2Silver4 rising while the others fall.
+self_play_epsilon: 1.0            # UNUSED without `self` in a pool; kept so re-adding self-play is
+                                  # a one-line change.
+
+reward_mode: margin               # own score gain minus the opponent's, per turn. Both players
+                                  # score on the SAME shared connection, so this also discourages
+                                  # completing a route whose path is mostly the opponent's track.
+win_bonus: 5000.0                 # terminal, RAW SCORE UNITS, applied to the final decision and
+                                  # divided by score_norm like everything else, so +/-5.0. The
+                                  # arena ranks on match outcomes and margin does not - in a
+                                  # 250-game round robin, 3 of 10 pairings had the two pointing
+                                  # opposite ways. It is also what makes self-play worth its
+                                  # compute. (No self-play in this config now - see Environment.)
+
+# --- Network (RailroadUNet: 2 down / 2 up, conv before and after, critic off the bottleneck) ---
+base_channels: 64
+value_hidden: 256
+
+# --- PPO ---
+num_iterations: 200              # the 065817 schedule: lr anneals 5e-5 -> 1e-5 inside the run.
+                                  # Both 500-iteration attempts held lr near peak long enough to
+                                  # integrate noise into the weights; this one cools fast.
+games_per_iteration: 64           # 2 games per worker: enough to smooth stragglers without
+                                  # pickling the ~8.8 MB state dict more often than necessary
+num_workers: 32                   # = nproc on this machine; games_per_iteration is a multiple
+gamma: 0.997                      # per DECISION. DO NOT RAISE. 0.998 was tried in run
+                                  # 20260912-222648 and is a 500-decision discount horizon on a
+                                  # ~225-decision game, i.e. effectively undiscounted - the critic
+                                  # then has to call the whole game from the opening move.
+gae_lambda: 0.98                  # DO NOT RAISE either. 0.99 was tried in the same run. Isolated
+                                  # on identical games from a common warm start:
+                                  #
+                                  #   gamma/lambda   horizon   mean|adv|   adv std
+                                  #     0.997/0.98        44       0.734     1.048
+                                  #     0.998/0.99        83       1.077     1.527
+                                  #
+                                  # +46% advantage variance bought +89% horizon, and the critic
+                                  # then fit the harder target WORSE (EV 0.87 -> 0.77, value loss
+                                  # doubled and still climbing at iteration 900). That run went
+                                  # 914 iterations and moved no eval column past its noise band.
+                                  # Long-horizon credit here comes from the CRITIC, not from the
+                                  # discount - ~80% of a 230-decision game is delegated to it.
+action_selection: onpolicy        # behaviour policy == policy, so the PPO ratio is unbiased
+clip_epsilon: 0.2
+ppo_epochs: 2                     # REVERTED from 3. The 3-epoch runs (130019, 164104) both ended
+                                  # with entropy above 2.0 and falling performance; the 2-epoch run
+                                  # (065817) is the only one that improved. The sample-efficiency
+                                  # argument for 3 was sound in principle, but with a near-one-bit
+                                  # reward the extra passes re-fit the same noisy advantages, so
+                                  # they buy drift rather than signal. Revisit only after the
+                                  # reward carries more than the terminal win bonus.
+minibatch_size: 256
+value_coef: 0.5
+entropy_coef: 0.001               # HALVED again after run 20260913-130019, which used 0.002 and
+                                  # decayed for 190 straight iterations. THE COEFFICIENT ALONE IS
+                                  # THE WRONG THING TO TUNE - what runs away is the entropy
+                                  # gradient integrated over the run, so what matters is
+                                  # `ppo_epochs x entropy_coef` held for `num_iterations` at a
+                                  # sustained lr. Three runs, same warm-start lineage:
+                                  #
+                                  #   run      epochs x coef   iters   lr tail   entropy      verdict
+                                  #   074038      2 x 0.001     1000   -> 0      1.68 -> 1.47   fell
+                                  #   065817      2 x 0.003      200   -> 1e-5   1.46 -> 1.52   held
+                                  #   130019      3 x 0.002     1000   -> 1e-5   1.58 -> 2.22   RAN AWAY
+                                  #
+                                  # Note 065817 and 130019 have the SAME per-iteration pressure
+                                  # (0.006) and opposite outcomes. The 200-iteration run cooled its
+                                  # lr fast enough that the bonus never accumulated; the
+                                  # 1000-iteration one held lr near peak and it did. So a value
+                                  # validated on a short run does NOT transfer to a long one.
+                                  #
+                                  # 3 x 0.001 = 0.003 sits between the setting that made entropy
+                                  # fall and the one that made it run away, which is the whole
+                                  # basis for this number. It is interpolation, not measurement.
+                                  #
+                                  #   !! ENTROPY ABOVE 1.9 IS A HARD STOP, NOT A NOTE. This was
+                                  #   !! already written as a soft warning and it was talked past
+                                  #   !! at iteration 109 of 130019 - entropy was 1.93 and climbing
+                                  #   !! while the eval was still rising, which read as the
+                                  #   !! hypothesis weakening. It was not weakening, it was
+                                  #   !! LAGGING: that run peaked at iteration 100 and every
+                                  #   !! column fell for the next 190 iterations. Entropy leads the
+                                  #   !! eval table by roughly 100 iterations. Do not wait for the
+                                  #   !! table to agree before stopping.
+                                  #
+                                  #   !! The other direction still applies: below ~1.4 and falling,
+                                  #   !! raise it. A collapsed policy explores nothing, and with
+                                  #   !! watch entropy AND self_play/win_rate - both lead the table.
+max_grad_norm: 0.5
+lr: 0.00005                       # unchanged. Opens the run at clip_frac ~0.26 and settles into
+                                  # band, which is what a healthy step size looks like here. The
+                                  # 2.5e-5 that run 222648 used was derived to continue a
+                                  # DIFFERENT run's tail and was simply too cold: clip_frac 0.162
+                                  # -> 0.040, approx_kl -> 0.003, 914 iterations of nothing.
+lr_end: 0.00001                   # 20% of peak, NOT zero. decay_progress = iteration/(n-1), so
+                                  # lr_end 0 spends the back third of a long run below 3e-6 -
+                                  # 222648 was at 2.5e-6 by iteration 900 and 155239 reached
+                                  # clip_frac 0.001 before finishing. A floor keeps the tail
+                                  # training, and since checkpoints are picked from a table a run
+                                  # that is still moving at the end costs nothing.
+score_norm: 1000.0                # per-turn margins are divided by this before GAE
+
+# --- Evaluation (greedy, fixed seeds - the only cross-run comparable number) ---
+eval_episodes: 100
+eval_max_turns: 100
+eval_bosses: level2Silver,level2Silver2,level2Silver3,level2Silver4
+#
+# NO TRIVIAL BOSSES, deliberately - level1/level1Pro/level2/level2Pro are won 1.00 by 15,000+ and
+# cost eval time to say nothing. But a table made only of TRAINING opponents cannot tell "improved"
+# from "specialised". The fix that adds no easy opponent: hold RUNGS out of training.
+#
+#   level2Silver4  THE TRAINING OPPONENT - the column the run optimises directly.
+#   level2Silver3  HELD OUT - the most contested of the older rungs, the primary detector.
+#   level2Silver2  HELD OUT - second detector.
+#   level2Silver   HELD OUT - continuity with older tables.
+#
+#   !! READ level2Silver4 AGAINST level2Silver3. Both rising = improving. level2Silver4 rising
+#   !! while level2Silver3 is flat or falling = learning to beat one frozen file, which is worth
+#   !! nothing in the arena. With a single training opponent this is the likeliest failure.
+#
+# All four read FROZEN files under baselines/, so re-baking submission.py mid-run moves nothing.
+# Cost: four subprocess opponents at ~1.0s per 100-turn game.
+
+# --- Bookkeeping ---
+checkpoint_every: 50              # 4 checkpoints and 4 eval tables over 200 iterations.
+                                  # Kept at 50 by decision (checkpoints/ is untracked and already
+                                  # 3 GB). The tradeoff to be aware of: run 130019 peaked at
+                                  # iteration 100 and was below its own warm start by 150, so a
+                                  # 50-grid can land either side of a peak that narrow. Mitigation
+                                  # is the stop list above - train/entropy and self_play/win_rate
+                                  # both turn BEFORE the eval table does, so use them to decide
+                                  # when to stop rather than relying on table resolution.
+checkpoint_dir: checkpoints
+init_checkpoint: checkpoints/20260913-065817_iter200.pt
+log_dir: null
+device: null
+seed: null
