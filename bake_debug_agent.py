@@ -50,6 +50,13 @@ features to encode who is winning. Fitting all 218 columns under one penalty is 
 two of them - 216 uninformative dimensions bury the pair that work, and the combined fit collapsed
 to the base rate - which is exactly why the column subset is a selected hyperparameter.
 
+That is a property of THAT checkpoint, not of the method. `distill.py` now has a
+`value_loss_weight` that regresses the teacher's value alongside the policy KL, so a student
+distilled with it has a trunk that was actually asked to encode who is winning. Re-run the
+selection on such a student before assuming the NN columns are useless - if they start winning it,
+that is the cleanest evidence the value term did its job. The same goes for `--calibrate`, which
+was only ever a fiction on a random critic.
+
 Four guards exist because the first four attempts each produced a confident wrong number instead:
 the split is by GAME and stratified by outcome (a random split gave a 0.49 train against 0.67
 held-out base rate, which swamped the score); "predict the base rate" is an explicit candidate, so
@@ -140,7 +147,16 @@ def fit_calibration(values, wins, iters=4000, lr=0.05):
     return a / sd, b - a * mu / sd
 
 
-def collect_calibration(model, kwargs, episodes, opponent, force_disrupt, seed0=90000):
+def _opponent_kwargs(opponent_path):
+    """A BakedSubmissionOpponent normally plays the frozen bake under baselines/. Pointing it at
+    another file is the only way to calibrate against an opponent that actually CONTESTS the
+    checkpoint - and once a student beats the frozen bar ~0.9, a probability fit has almost no
+    losses to learn from and collapses to the base rate no matter how many games you play."""
+    return {"submission_path": opponent_path} if opponent_path else None
+
+
+def collect_calibration(model, kwargs, episodes, opponent, force_disrupt, seed0=90000,
+                        opponent_path=None):
     """Play `episodes` greedy games with the torch model, returning (values, wins).
 
     One row per DECISION but one outcome per GAME, so the effective sample size is `episodes`.
@@ -153,7 +169,8 @@ def collect_calibration(model, kwargs, episodes, opponent, force_disrupt, seed0=
     torch.set_num_threads(1)
     values, wins = [], []
     for i in range(episodes):
-        env = RailroadGymEnv(max_turns=100, opponent_strategy=opponent, seed=seed0 + i)
+        env = RailroadGymEnv(max_turns=100, opponent_strategy=opponent, seed=seed0 + i,
+                             opponent_kwargs=_opponent_kwargs(opponent_path))
         env.reset()
         sim = GameSimulator.from_env(
             env, allow_skip_disrupt=kwargs.get("policy_channels", 3) == 3,
@@ -179,7 +196,8 @@ def collect_calibration(model, kwargs, episodes, opponent, force_disrupt, seed0=
     return np.array(values), np.array(wins)
 
 
-def collect_probe_data(model, kwargs, episodes, opponent, force_disrupt, seed0=95000):
+def collect_probe_data(model, kwargs, episodes, opponent, force_disrupt, seed0=95000,
+                       opponent_path=None):
     """Per decision: the 216-dim pooled bottleneck the value head sees, plus who won the game.
 
     Returns (X, y, game_id) where X is [216 pooled NN dims | score margin | turn]. `game_id`
@@ -198,7 +216,8 @@ def collect_probe_data(model, kwargs, episodes, opponent, force_disrupt, seed0=9
     X, y, gid = [], [], []
     try:
         for i in range(episodes):
-            env = RailroadGymEnv(max_turns=100, opponent_strategy=opponent, seed=seed0 + i)
+            env = RailroadGymEnv(max_turns=100, opponent_strategy=opponent, seed=seed0 + i,
+                                 opponent_kwargs=_opponent_kwargs(opponent_path))
             env.reset()
             sim = GameSimulator.from_env(
                 env, allow_skip_disrupt=kwargs.get("policy_channels", 3) == 3,
@@ -459,6 +478,12 @@ def main():
     ap.add_argument("--calibrate-opponent", default="level2Silver",
                     help="opponent the calibration games are played against (default: the frozen "
                          "rank-288 bake). The fit is only valid for this opponent's kind of game")
+    ap.add_argument("--calibrate-opponent-path", default=None, metavar="BAKE.py",
+                    help="point level2Silver at THIS baked .py instead of the frozen one under "
+                         "baselines/. Use it when the checkpoint has outgrown the frozen bar: a "
+                         "fit needs losses, and at a 0.9+ win rate there are almost none, so both "
+                         "--calibrate and --probe collapse toward the base rate however many "
+                         "games you play. Bake the previous student and calibrate against that")
     ap.add_argument("--probe", type=int, default=0, metavar="N",
                     help="Instead of baking the 27,905-parameter value head, play N games and fit "
                          "a 217-parameter logistic probe on the same pooled bottleneck, against "
@@ -507,10 +532,12 @@ def main():
                   f"Delete it to re-collect.")
         else:
             print(f"\nfitting a win-probability probe on {args.probe} greedy games vs "
-                  f"{args.calibrate_opponent}")
+                  f"{args.calibrate_opponent}"
+                  + (f" [{args.calibrate_opponent_path}]" if args.calibrate_opponent_path else ""))
             X, y, gid = collect_probe_data(
                 model, kwargs, args.probe, args.calibrate_opponent,
-                force_disrupt=bool(blob_ckpt.get("force_disrupt", False)))
+                force_disrupt=bool(blob_ckpt.get("force_disrupt", False)),
+                opponent_path=args.calibrate_opponent_path)
             np.savez_compressed(cache, X=X, y=y, gid=gid)
             print(f"  cached to {cache}")
         if len(np.unique(y)) < 2:
@@ -542,7 +569,8 @@ def main():
               f"(effective sample size is the GAME count, not the decision count)")
         values, wins = collect_calibration(
             model, kwargs, args.calibrate, args.calibrate_opponent,
-            force_disrupt=bool(blob_ckpt.get("force_disrupt", False)))
+            force_disrupt=bool(blob_ckpt.get("force_disrupt", False)),
+            opponent_path=args.calibrate_opponent_path)
         cal_a, cal_b = fit_calibration(values, wins)
         calibrated = True
         p = _sigmoid(cal_a * values + cal_b)
