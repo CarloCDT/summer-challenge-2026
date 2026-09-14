@@ -4,7 +4,7 @@ pygame>=2.2.0
 matplotlib>=3.5.0
 jupyter>=1.0.0
 
-# Training stack (see PROJECT_SUMMARY.md's "Training subsystem" section). torch needs a CUDA
+# Training stack (see README.md). torch needs a CUDA
 # build to use a GPU - the generic `torch` PyPI wheel is CPU-only; install from
 # https://download.pytorch.org/whl/<cuXXX> matching your driver's CUDA version instead,
 # e.g.: pip install torch --index-url https://download.pytorch.org/whl/cu130

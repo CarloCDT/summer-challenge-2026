@@ -105,7 +105,7 @@ def play_one_lite_game(
             dist = torch.distributions.Categorical(logits=flat)
             # epsilon-greedy: a purely stochastic policy almost never assembles the contiguous
             # corridor a connection needs, while argmax rides the network's spatial correlation
-            # and clusters picks near existing track. See PROJECT_SUMMARY.md.
+            # and clusters picks near existing track. See git history of PROJECT_SUMMARY.md.
             action_idx = dist.sample() if local_rng.rand() < epsilon else torch.argmax(flat, dim=1)
             log_prob = dist.log_prob(action_idx)
 
