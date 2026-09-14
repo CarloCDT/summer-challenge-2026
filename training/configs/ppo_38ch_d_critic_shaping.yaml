@@ -1,0 +1,55 @@
+# 38-channel warm start from the best teacher - ARM D: SEPARATE CRITIC + SHAPING. See
+# ppo_38ch_a_control.yaml for the four-arm layout; only the ARM block differs.
+grid_height: null
+max_turns: 100
+opponent_strategy: level2Silver4
+opponent_pool:
+  self: 0.50
+  level2Silver4: 0.25
+  level2Silver3: 0.15
+  level2Silver: 0.05
+  level2Pro: 0.05
+self_play_epsilon: 1.0
+allow_skip_disrupt: true
+force_disrupt: true
+reward_mode: margin
+win_bonus: 5000.0
+score_norm: 1000.0
+base_channels: 64
+value_hidden: 256
+num_iterations: 200
+games_per_iteration: 64
+num_workers: 32
+gamma: 0.997
+gae_lambda: 0.98
+action_selection: onpolicy
+clip_epsilon: 0.2
+ppo_epochs: 2
+minibatch_size: 256
+entropy_coef: 0.001
+lr: 0.00005
+lr_end: 0.00001
+eval_episodes: 200
+eval_max_turns: 100
+eval_bosses: level2Silver,level2Silver2,level2Silver3,level2Silver4
+checkpoint_every: 25
+checkpoint_dir: checkpoints
+init_checkpoint: checkpoints/20260913-065817_iter200.pt
+log_dir: null
+device: null
+seed: null
+
+# ---- ARM D: separate critic + potential-based shaping
+critic: separate
+critic_lr: 0.0001
+value_scale: 3.0
+value_coef: 0.5
+max_grad_norm: 10.0
+# Phi(s) = shaping_coef * tanh(projected_margin / shaping_margin_scale), with
+# projected_margin = score diff + (own - enemy income per turn) * turns left. Every decision gets
+# gamma*Phi(s') - Phi(s) added (Phi = 0 at the end), which leaves the optimal policy unchanged but
+# pays the +-5 win bonus out when the projected margin MOVES - a completed connection or an inked
+# enemy region - instead of 15+ turns later. 5000 matches win_bonus; 200 is roughly a contested
+# game's |final margin| (median 133 vs level2Silver4).
+shaping_coef: 5000.0
+shaping_margin_scale: 200.0

@@ -240,7 +240,7 @@ def _fwd(g):
 
 # ---------------------------------------------------------------- game constants
 BH,BW=20,30
-NCH=28
+NCH=%%NCH%%                      # what the network reads: 28 base channels, +10 derived if 38
 THRESH=4.0
 N4=((0,-1),(1,0),(0,1),(-1,0))   # N,E,S,W - the referee's tie-break order
 COST=(1,2,3,3)                   # plains, river, mountain, poi
@@ -311,8 +311,69 @@ def route_channels(inked_cell):
     _rc_cache[key]=ch
     return ch
 
-def observe(track,inst,inked_z,active,score_diff,turn):
-    """The 28 channels of GameState.get_observation, centered in the 20x30 canvas with the
+# ---------------------------------------------------------------- derived channels 28-37
+# An exact copy of railroad_env/features.py - change both together and re-run
+# verify_bake_parity.py. Only computed when the network reads them (NCH > 28).
+TIDX={_t[0]:_i for _i,_t in enumerate(towns)}
+ZINST=np.zeros(NZ); OPP_INST=np.zeros(NZ); LAST_DZ=-1
+
+def note_instability(inst):
+    """Channel 37's memory. The referee reports only each region's TOTAL instability, so the
+    opponent's share is this turn's increase minus our own disrupt from the previous turn."""
+    global ZINST,OPP_INST
+    z=np.zeros(NZ); z[zone.ravel()]=inst.ravel()
+    d=z-ZINST
+    if LAST_DZ>=0: d[LAST_DZ]-=1
+    OPP_INST=OPP_INST+np.maximum(d,0); ZINST=z
+
+def msc(step,blocked,src):
+    """features.multi_source_cost: cheapest summed entry cost from each source to every cell."""
+    enter=np.where(blocked,np.inf,step.astype(np.float64))
+    d=np.full((len(src),H,W),np.inf)
+    for i,(x,y) in enumerate(src): d[i,y,x]=0.0
+    while True:
+        n=np.full_like(d,np.inf)
+        n[:,1:,:]=d[:,:-1,:]
+        np.minimum(n[:,:-1,:],d[:,1:,:],out=n[:,:-1,:])
+        np.minimum(n[:,:,1:],d[:,:,:-1],out=n[:,:,1:])
+        np.minimum(n[:,:,:-1],d[:,:,1:],out=n[:,:,:-1])
+        new=np.minimum(d,n+enter)
+        if (new==d).all(): return d
+        d=new
+
+def derived(track,inked_z,conn,pairs,score_diff):
+    """features.derived_channels, from wire data: conn = active connections per cell, pairs =
+    the active (from, to) connections."""
+    out=np.zeros((10,H,W),np.float32)
+    m=conn.astype(np.float64)
+    own=track==my_id; foe=track==1-my_id
+    fl=zone.ravel()
+    oi=np.bincount(fl,weights=(own*m).ravel(),minlength=NZ)
+    fi=np.bincount(fl,weights=(foe*m).ravel(),minlength=NZ)
+    out[0]=m/10.0; out[1]=oi[zone]/20.0; out[2]=fi[zone]/20.0
+    out[3]=np.tanh(score_diff/300.0)
+    out[4]=np.tanh((oi.sum()-fi.sum())/30.0)
+    out[5]=ZHASTOWN[zone]
+    step=np.where((track>=0)|IS_TOWN,0,COSTMAP)
+    dist=msc(step,inked_z[zone]&~IS_TOWN,[(_t[1],_t[2]) for _t in towns])
+    cor=np.zeros((H,W)); urg=np.zeros((H,W)); tot=rea=0
+    for tid,tx,ty,dc in towns:
+        for o in dc:
+            if o not in TIDX: continue
+            tot+=1
+            ox,oy=towns[TIDX[o]][1],towns[TIDX[o]][2]
+            c=dist[TIDX[tid],oy,ox]
+            if not np.isfinite(c): continue
+            rea+=1
+            if (tid,o) in pairs or c<=0: continue
+            on=dist[TIDX[tid]]+dist[TIDX[o]]-step==c
+            cor+=on; urg=np.maximum(urg,np.where(on,1.0/c,0.0))
+    out[6]=cor/5.0; out[7]=urg; out[8]=rea/tot if tot else 0.0
+    out[9]=OPP_INST[zone]/4.0
+    return out
+
+def observe(track,inst,inked_z,active,conn,pairs,score_diff,turn):
+    """The first NCH channels of GameState.get_observation, centered in the 20x30 canvas with the
     padding marked inked. Channel 3 is the enemy and 4 is us regardless of player index."""
     inked_cell=inked_z[zone]
     o=np.zeros((NCH,BH,BW),np.float32)
@@ -341,27 +402,42 @@ def observe(track,inst,inked_z,active,score_diff,turn):
     # training/encoding.py leaves it.
     b[26]=score_diff/10000.0
     b[27]=turn/100.0
+    if NCH>28: b[28:]=derived(track,inked_z,conn,pairs,score_diff)[:NCH-28]
     o[:,PT:PT+H,PL:PL+W]=b
     o[23]=1.0
     o[23,PT:PT+H,PL:PL+W]=inked_cell
     return o
 
-turn=0
-while True:
+def read_frame():
+    """One referee frame -> (my_score, foe_score, track, inst, inked_z, active, conn, pairs), or
+    None at end of input. conn counts the active connections listed on each cell; pairs is every
+    active (from, to) connection, which always appears on at least its own two towns."""
     try:
         my_score=int(input()); foe_score=int(input())
     except EOFError:
-        break
+        return None
     track=np.zeros((H,W),np.int32); inst=np.zeros((H,W),np.float32)
-    inked_z=np.zeros(NZ,bool); active=np.zeros((H,W),bool)
+    inked_z=np.zeros(NZ,bool); active=np.zeros((H,W),bool); conn=np.zeros((H,W),np.int32)
+    names=set()
     for y in range(H):
         for x in range(W):
             p=input().split()
             track[y,x]=int(p[0]); inst[y,x]=float(p[1])
             if p[2]!="0": inked_z[zone[y,x]]=True
-            active[y,x]=(p[3]!="x")
+            if p[3]!="x":
+                cs=p[3].split(","); active[y,x]=True; conn[y,x]=len(cs); names.update(cs)
+    pairs={tuple(int(v) for v in s.split("-")) for s in names}
+    return my_score,foe_score,track,inst,inked_z,active,conn,pairs
 
-    logits=_fwd(observe(track,inst,inked_z,active,my_score-foe_score,turn))
+# ---------------------------------------------------------------- main loop
+turn=0
+while True:
+    frame=read_frame()
+    if frame is None: break
+    my_score,foe_score,track,inst,inked_z,active,conn,pairs=frame
+    note_instability(inst)
+
+    logits=_fwd(observe(track,inst,inked_z,active,conn,pairs,my_score-foe_score,turn))
 
     # The observation is fixed for the whole turn - training only ever recomputes the MASK
     # between sub-actions - so one forward pass covers every decision below.
@@ -377,6 +453,8 @@ while True:
         paint-=int(COSTMAP[y,x]); placeable[y,x]=False
 
     # Disrupting is optional: channel 2 spans the whole on-board plane and wins by max logit.
+    # LAST_DZ records what we disrupted, so note_instability can isolate the opponent's share.
+    LAST_DZ=-1
     ok=(~inked_z)&(~ZHASTOWN)
     dz=ok[zone]
     if dz.any():
@@ -385,7 +463,7 @@ while True:
         if %%SKIP%% and logits[2,PT:PT+H,PL:PL+W].max()>dl[by,bx]:
             pass
         else:
-            acts.append("DISRUPT %d"%zone[by,bx])
+            acts.append("DISRUPT %d"%zone[by,bx]); LAST_DZ=int(zone[by,bx])
 
     # flush=True is not optional. Python block-buffers stdout when it is a pipe, which is
     # exactly how a referee runs a bot, so an unflushed print can sit in the buffer past the
@@ -396,10 +474,22 @@ while True:
 '''
 
 
-def build_source(blob, shapes, quant, policy_channels, passive_income, allow_skip=True):
+#: The comment line that opens the runtime's main loop. verify_bake_parity.py execs everything
+#: above it, so it can drive read_frame / note_instability / observe with scripted frames.
+MAIN_LOOP_MARKER = "# ---------------------------------------------------------------- main loop"
+
+
+def build_source(blob, shapes, quant, policy_channels, passive_income, allow_skip=True,
+                 in_channels=28):
+    """`in_channels` is what the checkpoint's stem reads (model_kwargs["in_channels"]). The
+    runtime builds exactly that many observation channels, so a 28-channel net never pays for
+    the derived ones."""
+    if MAIN_LOOP_MARKER not in RUNTIME:
+        raise AssertionError("bake_agent.RUNTIME lost its main-loop marker (MAIN_LOOP_MARKER)")
     payload = base64.b85encode(zlib.compress(blob, 9)).decode("ascii")
     shape_src = "[" + ",".join(f'("{n}",{tuple(s)})' for n, s in shapes) + "]"
     src = RUNTIME
+    src = src.replace("%%NCH%%", str(int(in_channels)))
     src = src.replace("%%QUANT%%", f'"{quant}"')
     src = src.replace("%%SHAPES%%", shape_src)
     src = src.replace("%%BLOB%%", payload)
@@ -450,7 +540,7 @@ def main():
     n_params = sum(w.size + b.size for _, w, b in baked)
     blob, shapes = quantize(baked, args.quant)
     src = build_source(blob, shapes, args.quant, kwargs["policy_channels"], 3,
-                       allow_skip=allow_skip)
+                       allow_skip=allow_skip, in_channels=kwargs["in_channels"])
 
     Path(args.out).write_text(src)
     size = len(src)
@@ -504,7 +594,7 @@ def verify(out_path, sd, kwargs, episodes, allow_skip=True):
                 ref, _ = model(torch.from_numpy(state).unsqueeze(0),
                                torch.from_numpy(mask).unsqueeze(0))
             ref = ref[0].numpy()
-            got = np.where(mask == 0, -np.inf, fwd(state))
+            got = np.where(mask == 0, -np.inf, fwd(state[:kwargs["in_channels"]]))
             finite = np.isfinite(ref) & np.isfinite(got)
             if finite.any():
                 max_err = max(max_err, float(np.abs(ref[finite] - got[finite]).max()))

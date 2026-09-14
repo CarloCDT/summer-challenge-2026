@@ -425,6 +425,53 @@ def test_lite_env():
     check("lite: scoring still happens", sim.game_state.scores[0] >= 0)
 
 
+# --------------------------------------------------------------------- derived channels
+
+def test_derived_features():
+    """railroad_env/features.py, observation channels 28-37: each plane means what it claims,
+    checked against the rules engine rather than against its own arithmetic."""
+    from railroad_env.opponent import make_opponent
+    from railroad_env.pathfinding import autobuild, terrain_path_exists
+
+    base = GameState.DERIVED_CHANNEL_START
+    gs = make_state(77, height=20)
+    players = [make_opponent("level2ProMax", seed=1), make_opponent("greedy", seed=2)]
+    disrupts = [0, 0]
+    income_ok = memory_ok = reach_ok = chain_ok = True
+    chains = 0
+    while not gs.is_done() and gs.turn < 60:
+        actions = [p.get_actions(gs, pid) for pid, p in enumerate(players)]
+        summary = gs.resolve_turn(actions)
+        gs.do_income()
+        for pid in (0, 1):
+            disrupts[pid] += len(summary["disrupted"][pid])
+        # Game.moveTrains pays one point per own track per active path, so the connection counts
+        # summed over a player's track must equal what the turn actually paid that player.
+        income_ok &= list(gs.income_rates()) == list(summary["score_delta"])
+        wanted = [(t, o) for t in gs.towns for o in t.desired_connections]
+        reachable = sum(terrain_path_exists(gs.grid, t, o) for t, o in wanted) / max(1, len(wanted))
+        for pid in (0, 1):
+            obs = gs.get_observation(pid)
+            memory_ok &= int(gs.disruption_by_player[1 - pid].sum()) == disrupts[1 - pid]
+            memory_ok &= bool(np.allclose(obs[:, :, base + 9] * 4,
+                                          gs.disruption_by_player[1 - pid][gs.regions]))
+            reach_ok &= abs(float(obs[0, 0, base + 8]) - reachable) < 1e-6
+        if gs.turn % 10 == 0:
+            corridor = gs.get_observation(0)[:, :, base + 6]
+            for t, o in wanted:
+                if o.id in t.paths:
+                    continue
+                chain = autobuild(gs.grid, t.coord, o.coord)
+                if chain:
+                    chains += 1
+                    chain_ok &= all(corridor[y, x] > 0 for (x, y) in chain)
+    check("derived: connection counts over own track equal each turn's actual score delta", income_ok)
+    check("derived: opponent-disruption memory counts every successful enemy DISRUPT", memory_ok)
+    check("derived: reachable-connection share matches TerrainAStar", reach_ok)
+    check(f"derived: every AUTOPLACE chain lies on the cheapest-completion corridor ({chains} chains)",
+          chain_ok and chains > 0)
+
+
 def main():
     print("=== map generation ===")
     test_grid_dimensions()
@@ -448,6 +495,9 @@ def main():
 
     print("\n=== end to end ===")
     test_full_game_via_env()
+
+    print("\n=== derived observation channels ===")
+    test_derived_features()
 
     print("\n=== lite wrapper ===")
     test_lite_env()

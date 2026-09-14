@@ -1,0 +1,52 @@
+# 38-channel warm start from the best teacher - ARM C: SEPARATE CRITIC. See
+# ppo_38ch_a_control.yaml for the four-arm layout; only the ARM block differs.
+grid_height: null
+max_turns: 100
+opponent_strategy: level2Silver4
+opponent_pool:
+  self: 0.50
+  level2Silver4: 0.25
+  level2Silver3: 0.15
+  level2Silver: 0.05
+  level2Pro: 0.05
+self_play_epsilon: 1.0
+allow_skip_disrupt: true
+force_disrupt: true
+reward_mode: margin
+win_bonus: 5000.0
+score_norm: 1000.0
+base_channels: 64
+value_hidden: 256
+num_iterations: 200
+games_per_iteration: 64
+num_workers: 32
+gamma: 0.997
+gae_lambda: 0.98
+action_selection: onpolicy
+clip_epsilon: 0.2
+ppo_epochs: 2
+minibatch_size: 256
+entropy_coef: 0.001
+lr: 0.00005
+lr_end: 0.00001
+eval_episodes: 200
+eval_max_turns: 100
+eval_bosses: level2Silver,level2Silver2,level2Silver3,level2Silver4
+checkpoint_every: 25
+checkpoint_dir: checkpoints
+init_checkpoint: checkpoints/20260913-065817_iter200.pt
+log_dir: null
+device: null
+seed: null
+
+# ---- ARM C: separate critic
+# The critic is its own RailroadUNet, warm-started from the same teacher (value head included),
+# read through its encoder only. The policy trunk then gets ONLY policy gradient. It costs nothing
+# in submission size - bake_agent.py never ships a critic - and distill.py takes its value labels
+# from `critic_state_dict` automatically.
+critic: separate
+critic_lr: 0.0001                    # 2x the actor; annealed on the same schedule (to 2e-5)
+value_scale: 3.0
+value_coef: 0.5                      # unused with a separate critic; kept for the record
+max_grad_norm: 10.0                  # applied to actor and critic separately
+shaping_coef: 0.0

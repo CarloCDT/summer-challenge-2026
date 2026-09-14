@@ -31,6 +31,19 @@ DEFAULT_SCORE_NORM = 1000.0
 SELF_PLAY = "self"
 
 
+def shaping_potential(game_state, amplitude: float, margin_scale: float) -> float:
+    """Phi(s) for potential-based shaping, from player 0's side:
+    amplitude * tanh(projected final margin / margin_scale).
+
+    The projection holds both players' current income rates for the rest of the game:
+    score diff + (own income - enemy income) * turns left. `amplitude` is already in normalised
+    reward units (shaping_coef / score_norm), like the win bonus it is sized against."""
+    own, foe = game_state.income_rates()
+    turns_left = max(0, game_state.max_turns - game_state.turn)
+    projected = (game_state.scores[0] - game_state.scores[1]) + (own - foe) * turns_left
+    return float(amplitude * np.tanh(projected / margin_scale))
+
+
 def _sample_opponent(pool: Dict[str, float], rng: np.random.RandomState) -> str:
     """Draw one opponent name from a {name: weight} pool. Weights need not sum to 1."""
     names = sorted(pool)
@@ -86,6 +99,10 @@ def _play_one_game(
     opponent_pool: Optional[Dict[str, float]] = None,
     self_play_epsilon: float = 0.0,
     win_bonus: float = 0.0,
+    critic: Optional[torch.nn.Module] = None,
+    value_scale: float = 1.0,
+    shaping_coef: float = 0.0,
+    shaping_margin_scale: float = 200.0,
 ) -> Tuple[List[Transition], List[int], int]:
     """Plays one full game with the current policy, one atomic decision per PPO step.
     Returns (that game's transitions, its final [player0, player1] scores, its episode length).
@@ -143,16 +160,33 @@ def _play_one_game(
         force_disrupt=force_disrupt,
     )
 
-    states, masks, action_idxs, log_probs, values, rewards = [], [], [], [], [], []
+    states, masks, action_idxs, log_probs, values, rewards, potentials = [], [], [], [], [], [], []
 
+    # The observation only changes when a turn resolves - the sub-decisions inside one turn differ
+    # in their MASK alone - so the network, the critic and the shaping potential run once per turn
+    # and every decision re-masks the cached raw logits. Numerically identical to calling
+    # model(x, mask) per decision, at ~1/2.2 of the forward passes.
+    cached_turn = None
     while not sim.is_game_over():
-        state = sim.get_encoded_state()
         mask = sim.get_action_mask()  # (C, H, W) - see this module's docstring
+        if sim.game_state.turn != cached_turn:
+            cached_turn = sim.game_state.turn
+            state = sim.get_encoded_state()
+            with torch.no_grad():
+                x = torch.from_numpy(state).unsqueeze(0).to(device)
+                raw_logits, value = model(x)
+                if critic is not None:
+                    value = critic.value_only(x)
+            # The critic regresses return / value_scale (see ppo_update); GAE needs return units.
+            turn_value = float(value.item()) * value_scale
+            turn_potential = (
+                shaping_potential(sim.game_state, shaping_coef / score_norm, shaping_margin_scale)
+                if shaping_coef else 0.0
+            )
 
         with torch.no_grad():
-            x = torch.from_numpy(state).unsqueeze(0).to(device)
             m = torch.from_numpy(mask).unsqueeze(0).to(device)
-            logits, value = model(x, m)
+            logits = raw_logits.masked_fill(m == 0, torch.finfo(raw_logits.dtype).min)
             dist = torch.distributions.Categorical(logits=logits.flatten(1))
             if action_selection == "onpolicy":
                 action_idx = dist.sample()
@@ -180,8 +214,9 @@ def _play_one_game(
         masks.append(mask)
         action_idxs.append(int(action_idx.item()))
         log_probs.append(float(log_prob.item()))
-        values.append(float(value.item()))
+        values.append(turn_value)
         rewards.append(reward)
+        potentials.append(turn_potential)
 
     # Terminal win/loss bonus, in raw score units, applied to the final decision only.
     #
@@ -208,6 +243,18 @@ def _play_one_game(
         own, foe = sim.game_state.scores[0], sim.game_state.scores[1]
         outcome = (own > foe) - (own < foe)  # +1 win, -1 loss, 0 draw
         rewards[-1] += outcome * win_bonus / score_norm
+
+    # Potential-based shaping (Ng et al. 1999): r'_t = r_t + gamma * Phi(s_{t+1}) - Phi(s_t), with
+    # Phi = 0 after the final decision. The shaped rewards telescope to the true return minus
+    # Phi(s_0), so the optimal policy is unchanged - what changes is WHEN credit arrives. Phi is
+    # shaping_coef * tanh(projected final margin), on the win bonus's scale, so completing a
+    # connection or inking an enemy region pays out when the projection moves instead of turns
+    # later through GAE's ~15-turn window. Phi is constant within a turn, so the sub-decisions
+    # before the resolving one only see (gamma - 1) * Phi.
+    if shaping_coef and rewards:
+        for t in range(len(rewards)):
+            next_phi = potentials[t + 1] if t + 1 < len(potentials) else 0.0
+            rewards[t] += gamma * next_phi - potentials[t]
 
     advantages, returns = _gae(rewards, values, gamma, gae_lambda)
     transitions: List[Transition] = [
@@ -236,6 +283,10 @@ def _rollout_worker(
     opponent_pool: Optional[Dict[str, float]] = None,
     self_play_epsilon: float = 0.0,
     win_bonus: float = 0.0,
+    critic_state_dict_cpu: Optional[dict] = None,
+    value_scale: float = 1.0,
+    shaping_coef: float = 0.0,
+    shaping_margin_scale: float = 200.0,
 ) -> Tuple[List[Transition], List[int], int]:
     """Top-level, picklable multiprocessing worker - one game per call. Always runs on CPU
     and pins itself to a single thread, for the exact same reasons as
@@ -244,17 +295,24 @@ def _rollout_worker(
     across every core causes massive oversubscription.
 
     Self-play costs no extra IPC: the opponent reuses the very state dict already shipped here
-    for the agent, so a self-play game pickles nothing beyond a normal one."""
+    for the agent, so a self-play game pickles nothing beyond a normal one. A separate critic
+    does cost one more state dict per game."""
     torch.set_num_threads(1)
     model = RailroadUNet(**model_kwargs)
     model.load_state_dict(state_dict_cpu)
     model.eval()
+    critic = None
+    if critic_state_dict_cpu is not None:
+        critic = RailroadUNet(**model_kwargs)
+        critic.load_state_dict(critic_state_dict_cpu)
+        critic.eval()
     return _play_one_game(
         model, env_kwargs, "cpu", gamma, gae_lambda, epsilon, seed,
         allow_skip_disrupt=allow_skip_disrupt, score_norm=score_norm, reward_mode=reward_mode,
         force_disrupt=force_disrupt, action_selection=action_selection,
         opponent_pool=opponent_pool, self_play_epsilon=self_play_epsilon,
-        win_bonus=win_bonus,
+        win_bonus=win_bonus, critic=critic, value_scale=value_scale,
+        shaping_coef=shaping_coef, shaping_margin_scale=shaping_margin_scale,
     )
 
 
@@ -277,6 +335,10 @@ def collect_rollout(
     opponent_pool: Optional[Dict[str, float]] = None,
     self_play_epsilon: float = 0.0,
     win_bonus: float = 0.0,
+    critic: Optional[torch.nn.Module] = None,
+    value_scale: float = 1.0,
+    shaping_coef: float = 0.0,
+    shaping_margin_scale: float = 200.0,
 ) -> Tuple[List[Transition], List[List[int]], List[int]]:
     """Plays `games_per_iteration` full games with the current policy. Returns (all
     transitions across all games, each game's final [player0, player1] scores, each game's
@@ -286,12 +348,20 @@ def collect_rollout(
     when given, the games_per_iteration games are dispatched across it (real parallelism, one
     game per worker process) instead of played one after another in this process. Seeds are
     always drawn sequentially from `rng` here in the main process (never inside a worker), so a
-    given top-level seed reproduces the same per-game seeds regardless of num_workers."""
+    given top-level seed reproduces the same per-game seeds regardless of num_workers.
+
+    `critic`: a separate value network (train_ppo.py `critic: separate`); None reads the policy
+    net's own value head. `value_scale`, `shaping_coef` and `shaping_margin_scale`: see
+    `_play_one_game` and `ppo_update`."""
     model.eval()
+    if critic is not None:
+        critic.eval()
     seeds = [int(rng.randint(0, 2**31 - 1)) for _ in range(games_per_iteration)]
 
     if pool is not None:
         state_dict_cpu = {k: v.detach().cpu() for k, v in model.state_dict().items()}
+        critic_cpu = (None if critic is None
+                      else {k: v.detach().cpu() for k, v in critic.state_dict().items()})
         results = pool.starmap(
             _rollout_worker,
             [
@@ -300,7 +370,8 @@ def collect_rollout(
                 # insertion point silently shifts by one.
                 (state_dict_cpu, model_kwargs, env_kwargs, gamma, gae_lambda, epsilon, s,
                  allow_skip_disrupt, score_norm, reward_mode, force_disrupt, action_selection,
-                 opponent_pool, self_play_epsilon, win_bonus)
+                 opponent_pool, self_play_epsilon, win_bonus,
+                 critic_cpu, value_scale, shaping_coef, shaping_margin_scale)
                 for s in seeds
             ],
         )
@@ -310,7 +381,9 @@ def collect_rollout(
                            allow_skip_disrupt=allow_skip_disrupt, score_norm=score_norm,
                            reward_mode=reward_mode, force_disrupt=force_disrupt,
                            action_selection=action_selection, opponent_pool=opponent_pool,
-                           self_play_epsilon=self_play_epsilon, win_bonus=win_bonus)
+                           self_play_epsilon=self_play_epsilon, win_bonus=win_bonus,
+                           critic=critic, value_scale=value_scale, shaping_coef=shaping_coef,
+                           shaping_margin_scale=shaping_margin_scale)
             for s in seeds
         ]
 
@@ -336,15 +409,34 @@ def ppo_update(
     entropy_coef: float,
     max_grad_norm: float,
     device: str,
+    critic: Optional[torch.nn.Module] = None,
+    critic_optimizer: Optional[torch.optim.Optimizer] = None,
+    value_scale: float = 1.0,
 ) -> Dict[str, float]:
     """Standard clipped-surrogate PPO update over `ppo_epochs` passes of shuffled minibatches
     from `transitions` (collected under the policy BEFORE this update - the clipped ratio is
-    exactly what keeps reusing that stale data for several epochs safe)."""
+    exactly what keeps reusing that stale data for several epochs safe).
+
+    `value_scale`: the critic regresses return / value_scale, and rollouts multiply its output
+    back. Measured on 065817_iter200 against level2Silver4, returns have sd ~2.9 (the +-5 win
+    bonus) and the value loss's gradient norm on the shared weights was ~32 against ~7 for the
+    policy loss, near-orthogonal - the critic, not the policy, was steering the encoder. Scaling
+    the target by s cuts that gradient by s^2.
+
+    `critic` / `critic_optimizer`: a separate value network (read through value_only) with its
+    own optimizer. The policy net then receives no value gradient at all, and each network's
+    gradient is clipped on its own.
+
+    Gradient diagnostics, logged as train/*: grad_norm is the policy net's pre-clip total norm and
+    critic_grad_norm the critic's; grad_norm_policy and grad_norm_value are the policy loss's and
+    value_coef * value_loss's norms over the policy net's parameters, measured separately on the
+    first minibatch of each update."""
     states = torch.from_numpy(np.stack([t["state"] for t in transitions])).to(device)
     masks = torch.from_numpy(np.stack([t["mask"] for t in transitions])).to(device)
     actions = torch.tensor([t["action_idx"] for t in transitions], dtype=torch.long, device=device)
     old_log_probs = torch.tensor([t["log_prob"] for t in transitions], dtype=torch.float32, device=device)
     returns = torch.tensor([t["return"] for t in transitions], dtype=torch.float32, device=device)
+    value_targets = returns / value_scale
 
     advantages = torch.tensor([t["advantage"] for t in transitions], dtype=torch.float32, device=device)
 
@@ -383,17 +475,24 @@ def ppo_update(
     #
     # Dropout is deliberately left alive - it sits only in the value head and never touches the
     # policy logits, so it regularises the critic without perturbing the ratio.
-    for module in model.modules():
-        if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
-            module.eval()
-    stats = {"policy_loss": [], "value_loss": [], "entropy": [], "clip_frac": [], "approx_kl": []}
+    # The same pin applies to a separate critic: its rollout values also came from running stats.
+    for net in [model] + ([critic] if critic is not None else []):
+        net.train()
+        for module in net.modules():
+            if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
+                module.eval()
+    stats = {"policy_loss": [], "value_loss": [], "entropy": [], "clip_frac": [], "approx_kl": [],
+             "grad_norm": [], "critic_grad_norm": [], "grad_norm_policy": [], "grad_norm_value": []}
 
+    probed = False
     for _ in range(ppo_epochs):
         perm = torch.randperm(n, device=device)
         for start in range(0, n, minibatch_size):
             idx = perm[start:start + minibatch_size]
 
             logits, values = model(states[idx], masks[idx])
+            if critic is not None:
+                values = critic.value_only(states[idx])
             dist = torch.distributions.Categorical(logits=logits.flatten(1))
             new_log_probs = dist.log_prob(actions[idx])
             entropy = dist.entropy()
@@ -403,13 +502,30 @@ def ppo_update(
             surr2 = torch.clamp(ratio, 1 - clip_epsilon, 1 + clip_epsilon) * advantages[idx]
             policy_loss = -torch.min(surr1, surr2).mean()
 
-            value_loss = F.mse_loss(values.squeeze(1), returns[idx])
+            value_loss = F.mse_loss(values.squeeze(1), value_targets[idx])
 
-            loss = policy_loss + value_coef * value_loss - entropy_coef * entropy.mean()
+            if not probed:
+                # Once per update: how hard each loss pulls on the policy net, measured apart.
+                probed = True
+                actor_params = [p for p in model.parameters() if p.requires_grad]
+                stats["grad_norm_policy"].append(_grad_norm(policy_loss, actor_params))
+                if critic is None:
+                    stats["grad_norm_value"].append(_grad_norm(value_coef * value_loss, actor_params))
 
             optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+            if critic is None:
+                loss = policy_loss + value_coef * value_loss - entropy_coef * entropy.mean()
+                loss.backward()
+            else:
+                critic_optimizer.zero_grad(set_to_none=True)
+                # The two graphs share no parameters, so one backward fills both networks' grads
+                # and the value loss cannot reach the policy net.
+                (policy_loss - entropy_coef * entropy.mean() + value_loss).backward()
+                stats["critic_grad_norm"].append(
+                    float(torch.nn.utils.clip_grad_norm_(critic.parameters(), max_grad_norm)))
+                critic_optimizer.step()
+            stats["grad_norm"].append(
+                float(torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)))
             optimizer.step()
 
             with torch.no_grad():
@@ -425,6 +541,13 @@ def ppo_update(
             stats["value_loss"].append(value_loss.item())
             stats["entropy"].append(entropy.mean().item())
 
-    out = {k: float(np.mean(v)) for k, v in stats.items()}
+    out = {k: float(np.mean(v)) for k, v in stats.items() if v}
     out["explained_variance"] = explained_variance
     return out
+
+
+def _grad_norm(loss: torch.Tensor, params: List[torch.nn.Parameter]) -> float:
+    """L2 norm of d(loss)/d(params), without touching .grad and keeping the graph for backward."""
+    grads = torch.autograd.grad(loss, params, retain_graph=True, allow_unused=True)
+    squares = [g.detach().pow(2).sum() for g in grads if g is not None]
+    return float(torch.stack(squares).sum().sqrt()) if squares else 0.0

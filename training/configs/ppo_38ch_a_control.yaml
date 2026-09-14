@@ -1,0 +1,56 @@
+# 38-channel warm start from the best teacher - ARM A: CONTROL.
+#
+# Four configs share everything except the block marked ARM at the bottom:
+#   a_control         new channels, the OLD optimisation (shared critic, value_coef 0.5, clip 0.5)
+#   b_valuefix        + value_scale 3 and max_grad_norm 10 (the critic stops steering the trunk)
+#   c_critic          + a separate critic network instead of the shared value head
+#   d_critic_shaping  + potential-based shaping on the projected final margin
+#
+# Channels 28-37 (railroad_env/features.py) enter through ZERO stem weights, so iteration 0 of
+# every arm plays exactly like 20260913-065817_iter200. Judge the arms on the eval table at 200
+# episodes per rung (SE ~0.035), never on self_play/win_rate: half the games are self-play.
+grid_height: null
+max_turns: 100
+opponent_strategy: level2Silver4     # fallback only; opponent_pool overrides it per game
+opponent_pool:                       # the 065817 recipe - the last run that improved - one rung up
+  self: 0.50
+  level2Silver4: 0.25
+  level2Silver3: 0.15
+  level2Silver: 0.05
+  level2Pro: 0.05                    # keeps builder states (high connection counts) in the data
+self_play_epsilon: 1.0
+allow_skip_disrupt: true             # keeps the 3-channel head so the warm start loads
+force_disrupt: true
+reward_mode: margin
+win_bonus: 5000.0
+score_norm: 1000.0
+base_channels: 64
+value_hidden: 256
+num_iterations: 200
+games_per_iteration: 64
+num_workers: 32
+gamma: 0.997
+gae_lambda: 0.98
+action_selection: onpolicy
+clip_epsilon: 0.2
+ppo_epochs: 2
+minibatch_size: 256
+entropy_coef: 0.001
+lr: 0.00005
+lr_end: 0.00001
+eval_episodes: 200
+eval_max_turns: 100
+eval_bosses: level2Silver,level2Silver2,level2Silver3,level2Silver4
+checkpoint_every: 25
+checkpoint_dir: checkpoints
+init_checkpoint: checkpoints/20260913-065817_iter200.pt
+log_dir: null
+device: null
+seed: null
+
+# ---- ARM A: control
+critic: shared
+value_scale: 1.0
+value_coef: 0.5
+max_grad_norm: 0.5
+shaping_coef: 0.0

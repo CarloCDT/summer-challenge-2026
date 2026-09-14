@@ -25,9 +25,27 @@ from torch.utils.tensorboard import SummaryWriter
 from railroad_env.game_state import GameState
 from railroad_env.opponent import BOSS_TIERS, OPPONENT_STRATEGIES
 
-from .agent_model import RailroadUNet
+from .agent_model import RailroadUNet, expand_input_channels, rescale_value_head
 from .evaluate import evaluate_all_bosses, format_eval_table, log_eval_to_tensorboard
 from .ppo import DEFAULT_SCORE_NORM, SELF_PLAY, collect_rollout, ppo_update
+
+
+def _warm_start_state_dict(state_dict, ckpt, in_channels, value_scale, label):
+    """Adapt a checkpoint's weights to this run without changing what they compute.
+
+    Both surgeries are exact: the stem gains zero-weight input channels when the observation grew
+    (agent_model.expand_input_channels), and the value head's final Linear is rescaled when
+    value_scale changed, so V(s) in return units is what the source checkpoint predicted."""
+    state_dict, old_in = expand_input_channels(state_dict, in_channels)
+    if old_in != in_channels:
+        print(f"  {label}: stem widened {old_in} -> {in_channels} input channels with zero weights "
+              f"(identical outputs until the new weights train)")
+    old_scale = float(ckpt.get("value_scale", 1.0))
+    if old_scale != value_scale:
+        state_dict = rescale_value_head(state_dict, old_scale / value_scale)
+        print(f"  {label}: value head x{old_scale / value_scale:g} for value_scale "
+              f"{old_scale:g} -> {value_scale:g} (same predictions in return units)")
+    return state_dict
 
 
 def train_ppo(
@@ -71,6 +89,11 @@ def train_ppo(
     opponent_disrupt_probability: float = 0.5,
     seed: int = None,
     num_workers: int = 1,
+    value_scale: float = 1.0,          # the critic regresses return / value_scale; see ppo_update
+    critic: str = "shared",            # "shared" value head on the policy trunk, or "separate" net
+    critic_lr: float = None,           # separate critic's peak lr (default: lr), same schedule
+    shaping_coef: float = 0.0,         # potential-based shaping amplitude, RAW score units; 0 = off
+    shaping_margin_scale: float = 200.0,  # projected-margin scale inside the shaping tanh
 ):
     # See training/train.py's train() for why this pattern (locals() captured before any other
     # local variable exists) makes every run directory self-documenting.
@@ -109,17 +132,44 @@ def train_ppo(
     # bake_agent.py and the evaluators rebuild it correctly with no further flags.
     if channels is not None:
         model_kwargs["channels"] = tuple(int(c) for c in channels)
+    if critic not in ("shared", "separate"):
+        raise ValueError(f"critic must be 'shared' or 'separate', got {critic!r}")
+    if value_scale <= 0:
+        raise ValueError(f"value_scale must be positive, got {value_scale}")
+
     model = RailroadUNet(**model_kwargs).to(device)
+    # A separate critic is a second RailroadUNet read through value_only(): its encoder and value
+    # head train on the value loss alone, and the policy trunk sees only policy gradient. Its
+    # decoder and policy head are dead weight (no gradient) - accepted to keep one architecture,
+    # and irrelevant to the submission, which never contains a critic.
+    critic_net = RailroadUNet(**model_kwargs).to(device) if critic == "separate" else None
     if init_checkpoint is not None:
         # Weights only, not optimizer state - this is a warm start (fresh Adam moments), not a
         # resume. Iteration numbers in this run's logs/checkpoints start back at 0 regardless
         # of how far init_checkpoint's own run got - they're this run's own count, not a
         # continuation of the source run's numbering.
         init_ckpt = torch.load(init_checkpoint, map_location=device)
-        model.load_state_dict(init_ckpt["model_state_dict"])
-        print(f"Initialized weights from {init_checkpoint} (trained for {init_ckpt.get('iteration', '?')} iterations)")
+        print(f"Initializing from {init_checkpoint} (trained for {init_ckpt.get('iteration', '?')} iterations)")
+        model.load_state_dict(_warm_start_state_dict(
+            init_ckpt["model_state_dict"], init_ckpt, model_kwargs["in_channels"], value_scale, "policy"))
+        if critic == "shared" and "critic_state_dict" in init_ckpt:
+            print("  !! that checkpoint trained a SEPARATE critic, so its policy net's value head is "
+                  "stale - expect the first iterations to re-fit the value")
+        if critic_net is not None:
+            source = init_ckpt.get("critic_state_dict", init_ckpt["model_state_dict"])
+            critic_net.load_state_dict(_warm_start_state_dict(
+                source, init_ckpt, model_kwargs["in_channels"], value_scale, "critic"))
+            print("  critic: warm-started from "
+                  + ("its separate critic" if "critic_state_dict" in init_ckpt
+                     else "the policy checkpoint (encoder and value head)"))
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    print(f"RailroadUNet: {sum(p.numel() for p in model.parameters()):,} parameters")
+    critic_lr_peak = lr if critic_lr is None else critic_lr
+    critic_optimizer = (torch.optim.Adam(critic_net.parameters(), lr=critic_lr_peak)
+                        if critic_net is not None else None)
+    print(f"RailroadUNet: {sum(p.numel() for p in model.parameters()):,} parameters"
+          + (f"  (+ separate critic, peak lr {critic_lr_peak:g})" if critic_net is not None else "")
+          + f"  | value_scale {value_scale:g}"
+          + (f"  | shaping {shaping_coef:g} x tanh(margin/{shaping_margin_scale:g})" if shaping_coef else ""))
 
     # grid_height=None keeps the authentic random map size (height 14-20, width from the 1.5
     # aspect ratio); the encoding pads whatever comes out into the fixed network canvas.
@@ -180,6 +230,10 @@ def train_ppo(
                     group["lr"] = current_lr
             else:
                 current_lr = lr
+            if critic_optimizer is not None:
+                # The critic follows the actor's schedule shape, ending at the same share of its peak.
+                for group in critic_optimizer.param_groups:
+                    group["lr"] = critic_lr_peak * current_lr / lr
 
             transitions, final_scores_list, episode_lengths = collect_rollout(
                 env_kwargs, model, model_kwargs, device, gamma, gae_lambda,
@@ -188,6 +242,8 @@ def train_ppo(
                 reward_mode=reward_mode, force_disrupt=force_disrupt,
                 action_selection=action_selection, opponent_pool=opponent_pool,
                 self_play_epsilon=self_play_epsilon, win_bonus=win_bonus,
+                critic=critic_net, value_scale=value_scale, shaping_coef=shaping_coef,
+                shaping_margin_scale=shaping_margin_scale,
             )
             rollout_time = time.time() - iter_start
 
@@ -212,15 +268,15 @@ def train_ppo(
             stats = ppo_update(
                 model, optimizer, transitions, ppo_epochs, minibatch_size,
                 clip_epsilon, value_coef, entropy_coef, max_grad_norm, device,
+                critic=critic_net, critic_optimizer=critic_optimizer, value_scale=value_scale,
             )
             train_time = time.time() - train_start
 
-            writer.add_scalar("train/policy_loss", stats["policy_loss"], iteration)
-            writer.add_scalar("train/value_loss", stats["value_loss"], iteration)
-            writer.add_scalar("train/entropy", stats["entropy"], iteration)
-            writer.add_scalar("train/clip_frac", stats["clip_frac"], iteration)
-            writer.add_scalar("train/approx_kl", stats["approx_kl"], iteration)
-            writer.add_scalar("train/explained_variance", stats["explained_variance"], iteration)
+            # Every stat ppo_update measured - losses, clip/KL, explained variance, and the gradient
+            # norms (pre-clip totals, and the policy and value losses' norms on the shared weights)
+            # that expose a critic steering the policy trunk.
+            for stat_name, stat_value in stats.items():
+                writer.add_scalar(f"train/{stat_name}", stat_value, iteration)
             writer.add_scalar("train/seconds", train_time, iteration)
 
             print(
@@ -230,7 +286,10 @@ def train_ppo(
                 + f"policy_loss={stats['policy_loss']:.4f} value_loss={stats['value_loss']:.4f} "
                 f"entropy={stats['entropy']:.4f} clip_frac={stats['clip_frac']:.3f} "
                 f"ev={stats['explained_variance']:+.2f} "
-                f"rollout={rollout_time:.1f}s train={train_time:.1f}s transitions={len(transitions)}"
+                f"grad={stats['grad_norm']:.2f} (policy {stats.get('grad_norm_policy', float('nan')):.2f}"
+                + (f" / value {stats['grad_norm_value']:.2f}) " if "grad_norm_value" in stats
+                   else f" / critic {stats.get('critic_grad_norm', float('nan')):.2f}) ")
+                + f"rollout={rollout_time:.1f}s train={train_time:.1f}s transitions={len(transitions)}"
             )
 
             if (iteration + 1) % checkpoint_every == 0:
@@ -248,6 +307,15 @@ def train_ppo(
                         # weights - see play_eval_game's docstring.
                         "allow_skip_disrupt": allow_skip_disrupt,
                         "force_disrupt": force_disrupt,
+                        # How to read the critic: V in return units = output x value_scale, taken
+                        # from critic_state_dict when the run trained a separate one. distill.py
+                        # and the next warm start both honour these.
+                        "value_scale": value_scale,
+                        "critic": critic,
+                        **({"critic_state_dict": critic_net.state_dict()}
+                           if critic_net is not None else {}),
+                        "shaping_coef": shaping_coef,
+                        "shaping_margin_scale": shaping_margin_scale,
                     },
                     ckpt_file,
                 )

@@ -85,6 +85,9 @@ class RailroadUNet(nn.Module):
         that cap at int4, but the flat one has 3.9x more parameters running at full resolution.
         See training/configs/distill.yaml for the measured size table."""
         super().__init__()
+        # Recorded so forward() can slice a wider observation down to what this net was built
+        # for: channels are only ever APPENDED, so a 28-channel checkpoint reads the same first 28.
+        self.in_channels = int(in_channels)
         if channels is not None:
             c1, c2, c3 = (int(c) for c in channels)
         else:
@@ -124,18 +127,37 @@ class RailroadUNet(nn.Module):
         # --- convolution after ---
         self.head = nn.Conv2d(c1, policy_channels, kernel_size=3, padding=1)
 
+    def encode(self, x: torch.Tensor):
+        """Stem and encoder -> (skip1, skip2, bottleneck).
+
+        An input with MORE channels than this net was built for is sliced to its first
+        `in_channels`. Observation channels are only ever appended, so a checkpoint trained on the
+        28-channel layout reads exactly the planes it learned from a 38-channel observation."""
+        if x.shape[1] != self.in_channels:
+            if x.shape[1] < self.in_channels:
+                raise ValueError(
+                    f"RailroadUNet was built for {self.in_channels} input channels, got {x.shape[1]}"
+                )
+            x = x[:, :self.in_channels]
+        skip1 = self.enc1(self.stem(x))                  # (B, c1, 20, 30)
+        skip2 = self.enc2(self.pool(skip1))              # (B, c2, 10, 15)
+        bottleneck = self.bottleneck(self.pool(skip2))   # (B, c3, 5, 7)
+        return skip1, skip2, bottleneck
+
+    def value_only(self, x: torch.Tensor) -> torch.Tensor:
+        """The critic alone: stem, encoder, value head - no decoder, no policy head. This is how a
+        `critic: separate` network is read (train_ppo.py), at roughly half a full forward pass."""
+        return self.value_head(self.encode(x)[2])
+
     def forward(self, x: torch.Tensor, action_mask: torch.Tensor = None):
         """
-        x: (B, in_channels, BOARD_HEIGHT, BOARD_WIDTH)
+        x: (B, C >= in_channels, BOARD_HEIGHT, BOARD_WIDTH) - extra trailing channels are ignored
         action_mask: optional (B, policy_channels, BOARD_HEIGHT, BOARD_WIDTH), 1.0 = legal.
             Illegal cells get their pre-softmax logit driven to the dtype's minimum; the caller
             owns the softmax, this only ever returns raw (masked) logits.
         Returns: (policy_logits (B, policy_channels, H, W), value (B, 1))
         """
-        stem = self.stem(x)
-        skip1 = self.enc1(stem)                          # (B, c1, 20, 30)
-        skip2 = self.enc2(self.pool(skip1))              # (B, c2, 10, 15)
-        bottleneck = self.bottleneck(self.pool(skip2))   # (B, c3, 5, 7)
+        skip1, skip2, bottleneck = self.encode(x)
 
         value = self.value_head(bottleneck)              # (B, 1), unbounded
 
@@ -156,3 +178,33 @@ class RailroadUNet(nn.Module):
             )
 
         return policy_logits, value
+
+
+def expand_input_channels(state_dict: dict, in_channels: int):
+    """Widen a checkpoint's stem to `in_channels`, giving every new input channel ZERO weights.
+
+    Returns (state_dict, the checkpoint's original in_channels). The stem is the only layer that
+    sees the raw observation and a zero-weight channel contributes exactly nothing to it, so the
+    widened network computes the identical function - BatchNorm statistics included - until
+    training moves those weights. This is what lets a 28-channel teacher warm-start a 38-channel
+    run with no loss of play."""
+    weight = state_dict["stem.0.weight"]
+    old = weight.shape[1]
+    if old == in_channels:
+        return state_dict, old
+    if old > in_channels:
+        raise ValueError(f"checkpoint stem reads {old} channels, more than the {in_channels} requested")
+    pad = torch.zeros(weight.shape[0], in_channels - old, *weight.shape[2:],
+                      dtype=weight.dtype, device=weight.device)
+    widened = dict(state_dict)
+    widened["stem.0.weight"] = torch.cat([weight, pad], dim=1)
+    return widened, old
+
+
+def rescale_value_head(state_dict: dict, factor: float) -> dict:
+    """Multiply the critic's output by `factor`, exactly, by scaling its final Linear. A warm start
+    that changes value_scale uses it so V(s) in return units stays what the checkpoint predicted."""
+    scaled = dict(state_dict)
+    for key in ("value_head.5.weight", "value_head.5.bias"):
+        scaled[key] = state_dict[key] * factor
+    return scaled

@@ -70,12 +70,21 @@ def _play_and_label(args):
     and the student forwards during training by roughly 5x.
     """
     (teacher_sd, teacher_kwargs, student_sd, student_kwargs,
-     seed, max_turns, opponent, use_student, epsilon, force_disrupt) = args
+     seed, max_turns, opponent, use_student, epsilon, force_disrupt,
+     critic_sd, value_scale) = args
     torch.set_num_threads(1)
 
     teacher = RailroadUNet(**teacher_kwargs)
     teacher.load_state_dict(teacher_sd)
     teacher.eval()
+    # A teacher trained with `critic: separate` never trained its own value head, so the value
+    # label comes from the critic it was saved with. Either way the label is multiplied back by
+    # the teacher's value_scale: the student's head is read in raw return units.
+    critic = None
+    if critic_sd is not None:
+        critic = RailroadUNet(**teacher_kwargs)
+        critic.load_state_dict(critic_sd)
+        critic.eval()
     actor = teacher
     if use_student:
         actor = RailroadUNet(**student_kwargs)
@@ -105,10 +114,12 @@ def _play_and_label(args):
         if key != cur_state_key:
             with torch.no_grad():
                 tl, tv = teacher(torch.from_numpy(state).unsqueeze(0))
+                if critic is not None:
+                    tv = critic.value_only(torch.from_numpy(state).unsqueeze(0))
                 al = tl if actor is teacher else actor(torch.from_numpy(state).unsqueeze(0))[0]
             states.append(state.astype(np.float16))
             tlogits.append(tl[0].numpy().astype(np.float16))
-            tvalues.append(float(tv[0]))
+            tvalues.append(float(tv[0]) * value_scale)
             cur_state_key = key
             cur_actor_logits = al[0].numpy()
         index.append(len(states) - 1)
@@ -130,21 +141,25 @@ def _play_and_label(args):
 
 def collect(pool, teacher, teacher_kwargs, student, student_kwargs, seeds,
             max_turns, opponent, student_rollout_prob, epsilon, rng, force_disrupt=False,
-            opponent_pool=None):
+            opponent_pool=None, teacher_critic_sd=None, teacher_value_scale=1.0):
     """`opponent_pool` ({name: weight}) samples a different opponent per game.
 
     Distillation only ever teaches the student on the states it actually visits, so the opponent
     IS the syllabus. Rolling out against a single easy boss produces a student drilled on
     positions from games won 1.00 by +12,819, and never shown the inked endgames that decide
     real matches - the teacher's competence there cannot transfer if those positions are absent
-    from the data. Mirror the mix the agent will face."""
+    from the data. Mirror the mix the agent will face.
+
+    `teacher_critic_sd` / `teacher_value_scale` describe a teacher trained with a separate critic
+    and/or a value_scale: value labels come from that critic, converted back to return units."""
     t_sd = {k: v.detach().cpu() for k, v in teacher.state_dict().items()}
     # quantized=True: a DAgger rollout should explore the states the SHIPPED agent visits.
     s_sd = {k: v.cpu() for k, v in plain_state_dict(student, quantized=True).items()}
     jobs = [
         (t_sd, teacher_kwargs, s_sd, student_kwargs, int(s), max_turns,
          _sample_opponent(opponent_pool, rng) if opponent_pool else opponent,
-         bool(rng.rand() < student_rollout_prob), epsilon, force_disrupt)
+         bool(rng.rand() < student_rollout_prob), epsilon, force_disrupt,
+         teacher_critic_sd, teacher_value_scale)
         for s in seeds
     ]
     results = pool.map(_play_and_label, jobs) if pool else [_play_and_label(j) for j in jobs]
@@ -219,6 +234,16 @@ def distill(
     print(f"Teacher force_disrupt={force_disrupt}"
           + ("" if "force_disrupt" in blob else "  (not recorded in the checkpoint; assuming False)"))
 
+    # A teacher trained with `critic: separate` keeps its real critic apart from the policy net,
+    # and any teacher may regress return / value_scale. Value labels must come from the real
+    # critic, in return units, or value distillation teaches the student a stale head.
+    teacher_critic_sd = blob.get("critic_state_dict")
+    teacher_value_scale = float(blob.get("value_scale", 1.0))
+    if teacher_critic_sd is not None or teacher_value_scale != 1.0:
+        print("Teacher value labels: "
+              + ("separate critic" if teacher_critic_sd is not None else "shared value head")
+              + f" x value_scale {teacher_value_scale:g}")
+
     student_kwargs = dict(
         in_channels=teacher_kwargs["in_channels"],
         policy_channels=teacher_kwargs["policy_channels"],
@@ -280,7 +305,8 @@ def distill(
                 pool, teacher, teacher_kwargs, student, student_kwargs,
                 rng.randint(0, 2**31 - 1, size=games_per_iteration),
                 max_turns, opponent, beta, epsilon, rng, force_disrupt=force_disrupt,
-                opponent_pool=opponent_pool)
+                opponent_pool=opponent_pool, teacher_critic_sd=teacher_critic_sd,
+                teacher_value_scale=teacher_value_scale)
             collect_time = time.time() - t0
 
             S = torch.from_numpy(states).to(device=device, dtype=torch.float32)

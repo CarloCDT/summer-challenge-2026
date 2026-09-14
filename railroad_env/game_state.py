@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from . import constants as C
+from .features import NUM_DERIVED_CHANNELS, derived_channels
 from .grid import Coord, Grid, Tile, Town, get_rail_cost
 from .pathfinding import autobuild, terrain_path_exists, train_bfs
 
@@ -28,7 +29,12 @@ class GameState:
     TOWNS_CHANNEL = ACTIVE_CONNECTION_CHANNEL + 1                 # 25
     SCORE_DIFF_CHANNEL = TOWNS_CHANNEL + 1                        # 26
     TURN_CHANNEL = SCORE_DIFF_CHANNEL + 1                         # 27
-    NUM_CHANNELS = TURN_CHANNEL + 1                               # 28
+    #: Channels 28-37 are derived features (railroad_env/features.py). They are APPENDED: a
+    #: checkpoint built for the first 28 still reads identical planes (RailroadUNet slices its
+    #: input to its own in_channels), and a warm start only needs zero stem weights for the rest.
+    BASE_CHANNELS = TURN_CHANNEL + 1                              # 28
+    DERIVED_CHANNEL_START = BASE_CHANNELS                         # 28
+    NUM_CHANNELS = BASE_CHANNELS + NUM_DERIVED_CHANNELS           # 38
 
     #: Divisor for the raw per-region track counts in channels 5 and 6.
     TRACK_COUNT_SCALE = 10.0
@@ -70,6 +76,20 @@ class GameState:
 
         # Per-town open-terrain route guides only change when a zone gets inked.
         self._route_channels_cache: Optional[np.ndarray] = None
+
+        # Instability each player has added to each region. Channel 37 shows a player what the
+        # OPPONENT is attacking; it lives here because an observation must be a function of this
+        # state, and the baked runtime rebuilds the same numbers from instability deltas.
+        self.disruption_by_player = np.zeros((2, len(grid.zones)), dtype=np.int32)
+        # Derived channels only change when the board does, but every sub-decision of a turn - and
+        # both seats in self-play - re-encodes the same position, so they are cached against
+        # (turn, track version).
+        self._track_version = 0
+        self._connection_cache_key = None
+        self._connection_cache = None
+        self._derived_cache_key = None
+        self._derived_cache: Dict[int, np.ndarray] = {}
+        self._static_feature_arrays = None
 
         self.do_income()
 
@@ -247,6 +267,7 @@ class GameState:
 
                 self.disruption_points[player_id] -= 1
                 self.grid.zones[zone_id].instability += 1
+                self.disruption_by_player[player_id, zone_id] += 1
                 disrupted_per_player[player_id].append(zone_id)
 
         return placed_per_player, disrupted_per_player
@@ -254,6 +275,7 @@ class GameState:
     def _set_track(self, coord: Coord, owner: int) -> None:
         self.grid.cells[coord].track = owner
         self.tracks[coord[1], coord[0]] = owner
+        self._track_version += 1  # invalidates the derived-feature caches
 
     def _do_instability_check(self) -> List[int]:
         """Game.doInstabilityCheck: ink every zone at/over the threshold, wiping its tracks.
@@ -382,6 +404,9 @@ class GameState:
           25     a town stands here (any town, ownerless and never buildable)
           26     (own score - enemy score) / 10000, the same value in every cell
           27     turn / 100, the same value in every cell
+          28-37  derived features (connection counts, income at stake, rescaled gaps,
+                 cheapest-completion corridors, reachability, opponent disruption) - see
+                 railroad_env/features.py
         """
         total_cells = float(self.width * self.height)
         obs = np.zeros((self.height, self.width, self.NUM_CHANNELS), dtype=np.float32)
@@ -453,7 +478,60 @@ class GameState:
         )
         obs[:, :, self.TURN_CHANNEL] = self.turn / self.TURN_SCALE
 
+        obs[:, :, self.DERIVED_CHANNEL_START:] = np.moveaxis(self.derived_features(player), 0, -1)
         return obs
+
+    # ------------------------------------------------------------------ derived features
+
+    def _connection_state(self):
+        """(conn_count (H, W), active_pairs): how many active connection paths cover each cell,
+        and which (from, to) connections are active. Cached per board state."""
+        key = (self.turn, self._track_version)
+        if self._connection_cache_key != key:
+            conn = np.zeros((self.height, self.width), dtype=np.int32)
+            for (x, y), pairs in self.calculate_active_connections().items():
+                conn[y, x] = len(pairs)
+            pairs = {(t.id, other) for t in self.grid.towns for other in t.paths}
+            self._connection_cache_key, self._connection_cache = key, (conn, pairs)
+        return self._connection_cache
+
+    def income_rates(self) -> List[int]:
+        """Points each player scores at the end of the next turn if the board does not change: one
+        per own track per active path covering it. Equal to the last turn's score delta."""
+        conn, _ = self._connection_state()
+        return [int(conn[self.tracks == p].sum()) for p in (0, 1)]
+
+    def _static_arrays(self):
+        """(terrain cost, town mask, zone-has-town, town list) - fixed for the whole game."""
+        if self._static_feature_arrays is None:
+            cost = np.zeros((self.height, self.width), dtype=np.int32)
+            for (x, y), tile in self.grid.cells.items():
+                cost[y, x] = get_rail_cost(tile)
+            is_town = np.zeros((self.height, self.width), dtype=bool)
+            for town in self.grid.towns:
+                is_town[town.coord[1], town.coord[0]] = True
+            zone_has_town = np.array([bool(z.contained_towns) for z in self.grid.zones], dtype=bool)
+            towns = [(t.id, t.coord[0], t.coord[1], [o.id for o in t.desired_connections])
+                     for t in self.grid.towns]
+            self._static_feature_arrays = (cost, is_town, zone_has_town, towns)
+        return self._static_feature_arrays
+
+    def derived_features(self, player: int = 0) -> np.ndarray:
+        """(NUM_DERIVED_CHANNELS, height, width): observation channels 28-37 from `player`'s
+        perspective - see railroad_env/features.py. Cached per board state and player."""
+        key = (self.turn, self._track_version)
+        if self._derived_cache_key != key:
+            self._derived_cache_key, self._derived_cache = key, {}
+        if player not in self._derived_cache:
+            conn, pairs = self._connection_state()
+            cost, is_town, zone_has_town, towns = self._static_arrays()
+            zone_inked = np.array([z.inked for z in self.grid.zones], dtype=bool)
+            self._derived_cache[player] = derived_channels(
+                self.tracks, player, self.regions, zone_has_town, zone_inked, cost, is_town,
+                towns, pairs, conn, self.scores[player] - self.scores[1 - player],
+                self.disruption_by_player[1 - player],
+            )
+        return self._derived_cache[player]
 
 
 def _open_terrain_route(grid: Grid, from_town: Town, to_town: Town) -> List[Coord]:

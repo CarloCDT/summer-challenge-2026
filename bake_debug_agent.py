@@ -376,8 +376,8 @@ def _dbg_value(bo):
 
 '''
 
-_MAIN_FWD_OLD = '''    logits=_fwd(observe(track,inst,inked_z,active,my_score-foe_score,turn))'''
-_MAIN_FWD_NEW = '''    logits,_dbg_raw=_fwd(observe(track,inst,inked_z,active,my_score-foe_score,turn))'''
+_MAIN_FWD_OLD = '''    logits=_fwd(observe(track,inst,inked_z,active,conn,pairs,my_score-foe_score,turn))'''
+_MAIN_FWD_NEW = '''    logits,_dbg_raw=_fwd(observe(track,inst,inked_z,active,conn,pairs,my_score-foe_score,turn))'''
 
 _PRINT_OLD = '''    print(";".join(acts) if acts else "WAIT", flush=True)
     turn+=1'''
@@ -408,9 +408,9 @@ _PRINT_NEW = '''    _dbg_cmd=";".join(acts) if acts else "WAIT"
 
 
 def build_debug_source(blob, shapes, quant, policy_channels, passive_income, allow_skip,
-                       vph, vpw, cal_a, cal_b, calibrated, probe=None):
+                       vph, vpw, cal_a, cal_b, calibrated, probe=None, in_channels=28):
     src = BA.build_source(blob, shapes, quant, policy_channels, passive_income,
-                          allow_skip=allow_skip)
+                          allow_skip=allow_skip, in_channels=in_channels)
 
     # Guard against the failure that cost a debug cycle: the runtime already defines short
     # underscore names (_PB, _CB, _UC, _Q, _SH, _W, P...), and an injected constant that collides
@@ -504,6 +504,11 @@ def main():
     kwargs = blob_ckpt["model_kwargs"]
     sd = blob_ckpt["model_state_dict"]
     print(f"{args.checkpoint}: {kwargs}")
+    if "critic_state_dict" in blob_ckpt:
+        raise SystemExit("bake_debug_agent: this checkpoint trained a SEPARATE critic, so the "
+                         "policy net's own value head is stale and would bake a meaningless P(win). "
+                         "Debug-bake its distilled student instead - distill.py labels the student's "
+                         "value head from that critic.")
 
     if args.skip_disrupt is None:
         allow_skip = not blob_ckpt.get("force_disrupt", False)
@@ -600,7 +605,8 @@ def main():
     from training.agent_model import VALUE_POOL_HW
     src = build_debug_source(blob, shapes, args.quant, kwargs["policy_channels"], 3,
                              allow_skip, VALUE_POOL_HW[0], VALUE_POOL_HW[1],
-                             cal_a, cal_b, calibrated or probe is not None, probe)
+                             cal_a, cal_b, calibrated or probe is not None, probe,
+                             in_channels=kwargs["in_channels"])
     Path(args.out).write_text(src)
     n_policy = sum(w.size + b.size for _, w, b in BA.fold_batchnorm(sd))
     n_value = (len(probe[0]) + 1) if probe is not None else sum(
